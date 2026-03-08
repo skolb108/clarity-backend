@@ -15,9 +15,7 @@ const SYSTEM_PROMPT = `Du bist CLARITY.
 Ein ruhiger digitaler Mentor, der Menschen hilft,
 mehr Klarheit über ihr Leben zu gewinnen.
 
-Deine Zielgruppe sind urbane Professionals:
-Menschen mit wenig Zeit, viel mentaler Aktivität
-und dem Wunsch nach mehr Klarheit, Energie und Richtung.
+Deine Zielgruppe sind urbane Professionals.
 
 Dein Stil:
 ruhig
@@ -30,7 +28,7 @@ keine langen Texte
 REGELN
 
 - Stelle immer nur EINE Frage gleichzeitig.
-- Warte immer auf die Antwort des Nutzers.
+- Warte auf die Antwort des Nutzers.
 - Antworte kurz (maximal 2–3 Sätze).
 - Stelle niemals mehrere Fragen gleichzeitig.
 - Analysiere nur das, was der Nutzer wirklich gesagt hat.
@@ -70,7 +68,7 @@ app.post("/api/chat", async (req, res) => {
   try {
 
     const response = await fetch(
-      "https://api.openai.com/v1/chat/completions",
+      "https://api.openai.com/v1/responses",
       {
         method: "POST",
         headers: {
@@ -79,19 +77,26 @@ app.post("/api/chat", async (req, res) => {
         },
         body: JSON.stringify({
           model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
+          input: [
+            {
+              role: "system",
+              content: SYSTEM_PROMPT
+            },
             ...req.body.messages
           ],
           temperature: 0.7,
-          max_tokens: 500
+          max_output_tokens: 500
         })
       }
     );
 
     const data = await response.json();
 
-    res.json(data);
+    const reply =
+      data.output?.[0]?.content?.[0]?.text ||
+      "Entschuldige, ich konnte gerade keine Antwort generieren.";
+
+    res.json({ reply });
 
   } catch (error) {
 
@@ -106,5 +111,5 @@ app.post("/api/chat", async (req, res) => {
 });
 
 app.listen(3000, () => {
-  console.log("Server läuft auf Port 3000");
+  console.log("Clarity Server läuft 🚀");
 });
