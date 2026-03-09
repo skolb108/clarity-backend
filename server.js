@@ -1,100 +1,36 @@
 import express from "express";
-import dotenv from "dotenv";
 import cors from "cors";
-const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
+import OpenAI from "openai";
+import dotenv from "dotenv";
 
 dotenv.config();
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
-const SYSTEM_PROMPT = `Du bist CLARITY.
-
-Ein ruhiger digitaler Mentor, der Menschen hilft,
-mehr Klarheit über ihr Leben zu gewinnen.
-
-Deine Zielgruppe sind urbane Professionals.
-
-Dein Stil:
-ruhig
-klar
-präzise
-ermutigend
-nicht belehrend
-keine langen Texte
-
-REGELN
-
-- Stelle immer nur EINE Frage gleichzeitig.
-- Warte auf die Antwort des Nutzers.
-- Antworte kurz (maximal 2–3 Sätze).
-- Stelle niemals mehrere Fragen gleichzeitig.
-- Analysiere nur das, was der Nutzer wirklich gesagt hat.
-
-FRAGEN
-
-1 Was beschäftigt dich gerade am meisten in deinem Leben?
-2 Was läuft gut in deinem Leben – und was fühlt sich nicht richtig an?
-3 Wann fühlst du dich lebendig oder inspiriert?
-4 Welche Dinge geben dir Energie?
-5 Welche Dinge ziehen dir Energie?
-6 Worin bist du besonders gut?
-7 Wofür kommen andere Menschen zu dir wenn sie Hilfe brauchen?
-8 Wenn du in drei Jahren zurückblickst was müsste passiert sein damit du zufrieden bist?
-9 Gibt es etwas das du schon lange tun möchtest?
-10 Was hält dich bisher davon ab?
-11 Warum ist dir das trotzdem wichtig?
-12 Wenn du heute eine kleine Sache verändern würdest welche wäre das?
-
-ABSCHLUSS
-
-Wenn das Gespräch fertig ist schreibe:
-
-CONVERSATION_COMPLETE
-
-und danach das JSON Profil.
-`;
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 app.get("/", (req, res) => {
   res.send("Clarity Server läuft 🚀");
 });
 
 app.post("/api/chat", async (req, res) => {
-
-  console.log("API request received");
-
   try {
 
-    const response = await fetch(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          input: [
-            {
-              role: "system",
-              content: SYSTEM_PROMPT
-            },
-            ...req.body.messages
-          ],
-          temperature: 0.7,
-          max_output_tokens: 500
-        })
-      }
-    );
+    console.log("API request received");
 
-    const data = await response.json();
+    const { messages } = req.body;
 
-    const reply =
-      data.output?.[0]?.content?.[0]?.text ||
-      "Entschuldige, ich konnte gerade keine Antwort generieren.";
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: messages,
+      temperature: 0.7
+    });
+
+    const reply = completion.choices[0].message.content;
 
     res.json({ reply });
 
@@ -102,14 +38,15 @@ app.post("/api/chat", async (req, res) => {
 
     console.error("OpenAI error:", error);
 
-    res.status(500).json({
-      error: "OpenAI request failed"
+    res.json({
+      reply: "Entschuldige, ich konnte gerade keine Antwort generieren."
     });
 
   }
-
 });
 
-app.listen(3000, () => {
-  console.log("Clarity Server läuft 🚀");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Clarity Server läuft auf Port ${PORT}`);
 });
