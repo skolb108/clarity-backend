@@ -14,7 +14,7 @@ app.use(cors({
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"]
 }));
-app.options("*", cors());
+app.options("/api/chat", cors());
 app.use(express.json());
 
 const client = new OpenAI({
