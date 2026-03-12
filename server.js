@@ -70,6 +70,60 @@ app.get("/", (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────
+   POST /api/chat/stream — streaming SSE reflection
+   Sends tokens as: data: {"t":"<token>"}\n\n
+   Terminates with: data: [DONE]\n\n
+───────────────────────────────────────────────────────────── */
+app.post("/api/chat/stream", async (req, res) => {
+  console.log("Clarity API request received: /api/chat/stream");
+
+  const { messages } = req.body;
+  if (!messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: "messages missing or invalid" });
+  }
+
+  // SSE headers — disable all proxy/nginx buffering so tokens reach the client immediately
+  res.setHeader("Content-Type",      "text/event-stream");
+  res.setHeader("Cache-Control",     "no-cache, no-transform");
+  res.setHeader("Connection",        "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+
+  // Cancel the upstream request cleanly if the client disconnects mid-stream
+  req.on("close", () => controller.abort());
+
+  try {
+    const stream = await openai.chat.completions.create(
+      { model: "gpt-4o-mini", messages, stream: true },
+      { signal: controller.signal }
+    );
+
+    for await (const chunk of stream) {
+      const token = chunk.choices[0]?.delta?.content;
+      if (token) {
+        // JSON-encode so embedded newlines / quotes never break SSE framing
+        res.write(`data: ${JSON.stringify({ t: token })}\n\n`);
+      }
+    }
+
+    clearTimeout(timer);
+    res.write("data: [DONE]\n\n");
+    res.end();
+
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name !== "AbortError") {
+      console.error("/api/chat/stream error:", err.message);
+      res.write(`data: ${JSON.stringify({ error: true })}\n\n`);
+    }
+    res.end();
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────
    POST /api/chat — conversation reflections
 ───────────────────────────────────────────────────────────── */
 app.post("/api/chat", async (req, res) => {
