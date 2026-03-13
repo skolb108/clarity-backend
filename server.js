@@ -93,7 +93,7 @@ app.post("/api/chat/stream", async (req, res) => {
   const timer = setTimeout(() => controller.abort(), 30_000);
 
   // Cancel the upstream request cleanly if the client disconnects mid-stream
-  req.on("close", () => controller.abort());
+  req.on("aborted", () => controller.abort());
 
   try {
     const stream = await openai.chat.completions.create(
