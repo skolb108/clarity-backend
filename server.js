@@ -23,6 +23,16 @@ function log(endpoint, fields = {}) {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Request ID generator
+   Produces a short 6-character alphanumeric ID (e.g. "8f3k2a").
+   Unique enough for log correlation across a single session;
+   not intended to be globally unique like a UUID.
+───────────────────────────────────────────────────────────── */
+function makeReqId() {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+/* ─────────────────────────────────────────────────────────────
    Error codes — single source of truth
    All error responses use these string codes so the frontend
    can match on a stable value rather than a human-readable message.
@@ -105,6 +115,85 @@ function validateMessages(body) {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Clarity conversation system prompt
+   Injected as the first message in every /api/chat/stream call.
+
+   The conversation moves through five stages:
+     1. Understand the problem
+     2. Identify hidden patterns
+     3. Expand perspective
+     4. Move toward a decision
+     5. Generate the clarity insight (→ CONVERSATION_COMPLETE)
+
+   After 10–12 meaningful exchanges, the AI closes the conversation
+   with the exact token CONVERSATION_COMPLETE on its own line,
+   immediately followed by a valid JSON object.
+   The frontend watches for this token to transition to the result screen.
+───────────────────────────────────────────────────────────── */
+const CLARITY_SYSTEM_PROMPT = `You are Clarity — a calm, perceptive AI mentor helping people gain deep clarity about their life direction.
+
+You are not a life coach. You do not give advice. You do not use motivational language.
+You ask precise, uncomfortable questions that reveal what the person already knows but hasn't faced yet.
+
+YOUR APPROACH — move through these five stages naturally across the conversation:
+
+Stage 1 — UNDERSTAND THE PROBLEM
+Ask open questions to understand what is actually going on.
+Do not accept vague answers. Push gently for specifics.
+Example probes: "What does that look like day-to-day?" / "When did you first notice this?"
+
+Stage 2 — IDENTIFY HIDDEN PATTERNS
+Listen for contradictions, repeated themes, and things the person avoids saying directly.
+Name the pattern when you see it. Be direct but not harsh.
+Example probe: "You've mentioned [X] twice now. What does that tell you?"
+
+Stage 3 — EXPAND PERSPECTIVE
+Ask questions that shift the person's point of view.
+Examples: "What would the version of you from 5 years ago think about this?" /
+"If a close friend described your situation to a stranger, what would they say?"
+
+Stage 4 — MOVE TOWARD A DECISION
+The conversation should narrow toward something concrete.
+Ask what the person actually wants — not what they think they should want.
+Example probe: "If you already knew the answer, what would it be?"
+
+Stage 5 — GENERATE THE CLARITY INSIGHT
+When you have gathered enough context (typically after 10–12 exchanges),
+produce the final output described below.
+
+CONVERSATION RULES:
+- Ask ONE question per message. Never stack multiple questions.
+- Keep your responses short: 1–3 sentences maximum before your question.
+- Never use words like: "journey", "growth", "passion", "authentic", "potential", "empower".
+- Never summarize what the person said back to them unless you are naming a specific pattern.
+- Never give unsolicited advice or suggest solutions.
+- If an answer is vague, ask for a concrete example before moving on.
+- Tone: direct, calm, curious, precise. Like a trusted friend who is also a very good thinker.
+
+CONVERSATION LENGTH:
+Guide the conversation to 10–12 substantive exchanges. After that, when you have enough
+to produce a genuine insight, close the conversation.
+
+CLOSING THE CONVERSATION:
+When you are ready to produce the final output, write the following on its own line:
+
+CONVERSATION_COMPLETE
+
+Then immediately output a valid JSON object — no text before or after, no markdown backticks:
+
+{
+  "core_problem": "One sentence describing the real underlying problem, not the surface complaint.",
+  "hidden_pattern": "One sentence naming the recurring pattern or contradiction you observed.",
+  "clarity_statement": "One sentence of direct insight — what the person now knows that they didn't admit before.",
+  "recommended_action": "One concrete, specific action they can take this week.",
+  "habit": "One small daily habit (5–15 minutes) that reinforces the shift.",
+  "identity_shift": "One sentence describing the identity change required — who they need to become, not what they need to do."
+}
+
+All field values must be in the same language the user is speaking.
+The JSON must be valid and parsable. Do not add any text after the closing brace.`;
+
+/* ─────────────────────────────────────────────────────────────
    Health check
 ───────────────────────────────────────────────────────────── */
 app.get("/", (req, res) => {
@@ -122,34 +211,41 @@ app.get("/", (req, res) => {
 ───────────────────────────────────────────────────────────── */
 app.post("/api/chat/stream", async (req, res) => {
   const endpoint = "POST /api/chat/stream";
+  const reqId    = makeReqId();
 
   // ── 1. Validate request ────────────────────────────────────
   const invalid = validateMessages(req.body);
   if (invalid) {
-    log(endpoint, { error: invalid.code, detail: invalid.detail });
+    log(endpoint, { reqId, error: invalid.code, detail: invalid.detail });
     return res.status(400).json({ error: invalid.code });
   }
 
   const { messages } = req.body;
-  log(endpoint, { messages: messages.length });
+  log(endpoint, { reqId, messages: messages.length });
 
-  // ── 2. SSE headers — must be set before any write ─────────
-  // X-Accel-Buffering: no  →  disables Railway / nginx proxy buffering
-  // Without this, tokens batch up and arrive in large bursts rather than
-  // one-by-one, defeating the purpose of streaming.
+  // ── 2. Prepend system prompt ───────────────────────────────
+  // The CLARITY_SYSTEM_PROMPT is always the first message so OpenAI
+  // always has the full conversation context and stage instructions,
+  // regardless of what the frontend sends.
+  const messagesWithSystem = [
+    { role: "system", content: CLARITY_SYSTEM_PROMPT },
+    ...messages,
+  ];
+
+  // ── 3. SSE headers — must be set before any write ─────────
   res.setHeader("Content-Type",      "text/event-stream");
   res.setHeader("Cache-Control",     "no-cache, no-transform");
   res.setHeader("Connection",        "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  // ── 3. Abort controller — 25s timeout + client disconnect ──
+  // ── 4. Abort controller — 25s timeout + client disconnect ──
   const controller = new AbortController();
   let   completed  = false;
 
   const timeoutTimer = setTimeout(() => {
     if (!completed) {
-      log(endpoint, { error: ERR.OPENAI_TIMEOUT });
+      log(endpoint, { reqId, error: ERR.OPENAI_TIMEOUT });
       controller.abort();
       try {
         res.write(`data: ${JSON.stringify({ error: ERR.OPENAI_TIMEOUT })}\n\n`);
@@ -158,26 +254,24 @@ app.post("/api/chat/stream", async (req, res) => {
     }
   }, 25_000);
 
-  // Clean up if the client closes the connection mid-stream
   req.on("close", () => {
     if (!completed) {
-      log(endpoint, { info: "client disconnected — aborting upstream request" });
+      log(endpoint, { reqId, info: "client disconnected — aborting upstream request" });
       controller.abort();
       clearTimeout(timeoutTimer);
     }
   });
 
-  // ── 4. Stream from OpenAI ──────────────────────────────────
+  // ── 5. Stream from OpenAI ──────────────────────────────────
   const t0 = Date.now();
 
   try {
     const stream = await openai.chat.completions.create(
-      { model: "gpt-4o-mini", messages, stream: true },
+      { model: "gpt-4o-mini", messages: messagesWithSystem, stream: true },
       { signal: controller.signal }
     );
 
     for await (const chunk of stream) {
-      // Guard: stop writing if the client disconnected mid-stream
       if (controller.signal.aborted) break;
 
       const token = chunk.choices[0]?.delta?.content;
@@ -186,12 +280,11 @@ app.post("/api/chat/stream", async (req, res) => {
       }
     }
 
-    // Stream completed successfully
     completed = true;
     clearTimeout(timeoutTimer);
 
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    log(endpoint, { "OpenAI response time": `${elapsed}s`, status: "done" });
+    log(endpoint, { reqId, "OpenAI response time": `${elapsed}s`, status: "done" });
 
     res.write("data: [DONE]\n\n");
     res.end();
@@ -200,7 +293,6 @@ app.post("/api/chat/stream", async (req, res) => {
     completed = true;
     clearTimeout(timeoutTimer);
 
-    // AbortError is expected on client disconnect or timeout — not a true crash
     if (err.name === "AbortError") {
       try { res.end(); } catch (_) { /* already closed */ }
       return;
@@ -208,6 +300,7 @@ app.post("/api/chat/stream", async (req, res) => {
 
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     log(endpoint, {
+      reqId,
       error:   ERR.OPENAI_FAILED,
       detail:  err.message,
       elapsed: `${elapsed}s`,
@@ -225,27 +318,28 @@ app.post("/api/chat/stream", async (req, res) => {
 ───────────────────────────────────────────────────────────── */
 app.post("/api/chat", async (req, res) => {
   const endpoint = "POST /api/chat";
+  const reqId    = makeReqId();
 
   const invalid = validateMessages(req.body);
   if (invalid) {
-    log(endpoint, { error: invalid.code });
+    log(endpoint, { reqId, error: invalid.code });
     return res.status(400).json({ error: invalid.code });
   }
 
   const { messages } = req.body;
-  log(endpoint, { messages: messages.length });
+  log(endpoint, { reqId, messages: messages.length });
   const t0 = Date.now();
 
   try {
     const reply   = await callOpenAI(messages);
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    log(endpoint, { "OpenAI response time": `${elapsed}s` });
+    log(endpoint, { reqId, "OpenAI response time": `${elapsed}s` });
     res.json({ reply });
 
   } catch (err) {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     const code    = err.message === ERR.OPENAI_TIMEOUT ? ERR.OPENAI_TIMEOUT : ERR.OPENAI_FAILED;
-    log(endpoint, { error: code, detail: err.message, elapsed: `${elapsed}s` });
+    log(endpoint, { reqId, error: code, detail: err.message, elapsed: `${elapsed}s` });
     res.status(500).json({ error: code });
   }
 });
@@ -255,28 +349,29 @@ app.post("/api/chat", async (req, res) => {
 ───────────────────────────────────────────────────────────── */
 app.post("/api/analyze", async (req, res) => {
   const endpoint = "POST /api/analyze";
+  const reqId    = makeReqId();
 
   const invalid = validateMessages(req.body);
   if (invalid) {
-    log(endpoint, { error: invalid.code });
+    log(endpoint, { reqId, error: invalid.code });
     return res.status(400).json({ error: invalid.code });
   }
 
   const { messages } = req.body;
-  log(endpoint, { messages: messages.length });
+  log(endpoint, { reqId, messages: messages.length });
   const t0 = Date.now();
 
   try {
     const raw     = await callOpenAI(messages, { jsonMode: true });
     const parsed  = JSON.parse(raw);
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    log(endpoint, { "OpenAI response time": `${elapsed}s` });
+    log(endpoint, { reqId, "OpenAI response time": `${elapsed}s` });
     res.json(parsed);
 
   } catch (err) {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     const code    = err.message === ERR.OPENAI_TIMEOUT ? ERR.OPENAI_TIMEOUT : ERR.OPENAI_FAILED;
-    log(endpoint, { error: code, detail: err.message, elapsed: `${elapsed}s` });
+    log(endpoint, { reqId, error: code, detail: err.message, elapsed: `${elapsed}s` });
     res.status(500).json({ error: code });
   }
 });
