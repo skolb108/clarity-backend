@@ -17,6 +17,7 @@
     "express": "^4.19.2",
     "html-to-image": "^1.11.13",
     "node-fetch": "^3.3.2",
-    "openai": "^6.27.0"
+    "openai": "^6.27.0",
+    "resend": "^6.10.0"
   }
 }

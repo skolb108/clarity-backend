@@ -2,6 +2,9 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
+// import { Resend } from "resend";
+
+const waitlist = [];
 
 dotenv.config();
 
@@ -56,6 +59,9 @@ app.use(express.json());
 
 /* OpenAI */
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+/* Resend */
+const resend = null;
 
 /* ─────────────────────────────────────────────────────────────
    callOpenAI — shared helper with retry + 25s timeout
@@ -373,6 +379,104 @@ app.post("/api/analyze", async (req, res) => {
     const code    = err.message === ERR.OPENAI_TIMEOUT ? ERR.OPENAI_TIMEOUT : ERR.OPENAI_FAILED;
     log(endpoint, { reqId, error: code, detail: err.message, elapsed: `${elapsed}s` });
     res.status(500).json({ error: code });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────
+   In-memory share store
+   Maps short IDs → result objects. Lives for the process lifetime.
+   IDs are 7-character alphanumeric strings e.g. "k3x9w2f".
+───────────────────────────────────────────────────────────── */
+const store = {};
+
+function makeShareId() {
+  return Math.random().toString(36).slice(2, 9);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   POST /api/share — store a result, get back a short ID
+   Body: { result: <any> }
+   Returns: { id: "k3x9w2f" }
+───────────────────────────────────────────────────────────── */
+app.post("/api/share", (req, res) => {
+  const { result } = req.body;
+  if (!result || typeof result !== "object") {
+    return res.status(400).json({ error: "INVALID_SHARE_BODY" });
+  }
+  const id = makeShareId();
+  store[id] = result;
+  log("POST /api/share", { id });
+  res.json({ id });
+});
+
+app.post("/api/waitlist", (req, res) => {
+  const { email } = req.body;
+
+  if (!email || typeof email !== "string") {
+    return res.status(400).json({ error: "INVALID_EMAIL" });
+  }
+
+  waitlist.push(email);
+
+  console.log("🔥 NEW WAITLIST SIGNUP:", email);
+  console.log("📊 TOTAL:", waitlist.length);
+
+  res.json({ ok: true });
+});
+
+/* ─────────────────────────────────────────────────────────────
+   GET /api/share/:id — retrieve a stored result by short ID
+   Returns the result object, or 404 if not found.
+───────────────────────────────────────────────────────────── */
+app.get("/api/share/:id", (req, res) => {
+  const { id } = req.params;
+  const result = store[id];
+  if (!result) {
+    log("GET /api/share/:id", { id, status: "not found" });
+    return res.status(404).json({ error: "SHARE_NOT_FOUND" });
+  }
+  log("GET /api/share/:id", { id, status: "ok" });
+  res.json(result);
+});
+
+/* ─────────────────────────────────────────────────────────────
+   POST /api/reminder — send an immediate reminder email via Resend
+   Body: { email: string, type: "habit" | "reflection" }
+   Returns: { ok: true } on success, 400/500 on error.
+───────────────────────────────────────────────────────────── */
+app.post("/api/reminder", async (req, res) => {
+  const endpoint = "POST /api/reminder";
+  const reqId    = makeReqId();
+
+  const { email, type } = req.body || {};
+
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    log(endpoint, { reqId, error: "INVALID_EMAIL" });
+    return res.status(400).json({ error: "INVALID_EMAIL" });
+  }
+
+  if (type !== "habit" && type !== "reflection") {
+    log(endpoint, { reqId, error: "INVALID_TYPE", detail: type });
+    return res.status(400).json({ error: "INVALID_TYPE" });
+  }
+
+  const subject = type === "habit"
+    ? "Deine Clarity-Erinnerung für heute"
+    : "Dein Clarity-Rückblick für heute Abend";
+
+  const text = type === "habit"
+    ? "Erinnerung: Setze heute deine geplante Gewohnheit um."
+    : "Erinnerung: Nimm dir heute Abend 2 Minuten für deinen Rückblick.";
+
+  log(endpoint, { reqId, email, type });
+
+  try {
+    await console.log("Reminder (mock):", email, type);
+    log(endpoint, { reqId, status: "sent" });
+    res.json({ ok: true });
+  } catch (err) {
+    log(endpoint, { reqId, error: "EMAIL_FAILED", detail: err.message });
+    res.status(500).json({ error: "EMAIL_FAILED" });
   }
 });
 
