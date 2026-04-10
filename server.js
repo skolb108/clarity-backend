@@ -383,6 +383,54 @@ Then output ONLY valid JSON:
   "identity_shift": "..."
 }
 
+FIELD REQUIREMENTS (CRITICAL):
+
+core_problem:
+→ The brutally simple, undeniable truth about the person's situation.
+→ Not a description. A statement.
+→ Max 1–2 short sentences.
+→ Must feel specific to this person, not generic.
+Example: "Du weißt nicht, was du willst."
+NOT: "Du befindest dich in einer Situation der Unklarheit."
+
+hidden_pattern:
+→ Expose what the person keeps doing — the repeating behavior that blocks them.
+→ Name it plainly. No explanation of why.
+→ Max 1–2 sentences.
+Example: "Du hältst dir alle Optionen offen — und kommst genau deshalb nicht voran."
+NOT: "Es zeigt sich ein Muster, bei dem du Entscheidungen vermeidest."
+
+clarity_statement:
+→ The sentence that hits. The insight they already knew but hadn't faced.
+→ Direct. Slightly uncomfortable. Undeniable.
+→ Max 1–2 sentences.
+Example: "Du wartest nicht auf Klarheit. Du vermeidest die Entscheidung."
+NOT: "Es scheint, als ob du noch mehr Klarheit benötigst."
+
+recommended_action:
+→ One specific action. Slightly uncomfortable but simple.
+→ Not advice. A directive.
+→ Must be concrete enough to do today or this week.
+Example: "Wähle heute eine Sache und committe dich für 7 Tage."
+NOT: "Versuche, mehr Klarheit über deine Ziele zu gewinnen."
+
+habit:
+→ One small, daily action (5–15 min) that reinforces the shift.
+→ Concrete. Specific. No vague language.
+Example: "Jeden Morgen: Eine Sache aufschreiben, die du heute entscheidest."
+
+identity_shift:
+→ CRITICAL. Not a behavior. An identity.
+→ Who they need to become — stated as a simple, new self-description.
+→ Must feel like a real shift, not an aspiration.
+Example: "Jemand, der entscheidet — auch wenn es sich falsch anfühlt."
+NOT: "Eine Person, die klarer in ihren Entscheidungen wird."
+
+FINAL OUTPUT RULE:
+If any field could apply to many people → rewrite it.
+If any field feels like a report → rewrite it.
+If it feels like truth → keep it.
+
 Language must match the user.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
