@@ -74,7 +74,7 @@ async function callOpenAI(messages, options = {}) {
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25_000);
+    const timer = setTimeout(() => controller.abort(), 60_000);
 
     try {
       const params = {
@@ -207,146 +207,20 @@ app.get("/", (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────
-   POST /api/chat/stream — streaming SSE reflection
-   Streams OpenAI tokens to the frontend as Server-Sent Events.
-
-   SSE protocol:
-     each token →  data: {"t":"<token>"}\n\n
-     on finish  →  data: [DONE]\n\n
-     on error   →  data: {"error":"<code>"}\n\n
-───────────────────────────────────────────────────────────── */
-app.post("/api/chat/stream", async (req, res) => {
-  const endpoint = "POST /api/chat/stream";
-  const reqId    = makeReqId();
-
-  // ── 1. Validate request ────────────────────────────────────
-  const invalid = validateMessages(req.body);
-  if (invalid) {
-    log(endpoint, { reqId, error: invalid.code, detail: invalid.detail });
-    return res.status(400).json({ error: invalid.code });
-  }
-
-  const { messages } = req.body;
-  log(endpoint, { reqId, messages: messages.length });
-
-  // ── 2. Prepend system prompt ───────────────────────────────
-  // The CLARITY_SYSTEM_PROMPT is always the first message so OpenAI
-  // always has the full conversation context and stage instructions,
-  // regardless of what the frontend sends.
-  const messagesWithSystem = [
-    { role: "system", content: CLARITY_SYSTEM_PROMPT },
-    ...messages,
-  ];
-
-  // ── 3. SSE headers — must be set before any write ─────────
-  res.setHeader("Content-Type",      "text/event-stream");
-  res.setHeader("Cache-Control",     "no-cache, no-transform");
-  res.setHeader("Connection",        "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders();
-
-  // ── 4. Abort controller — 25s timeout + client disconnect ──
-  const controller = new AbortController();
-  let   completed  = false;
-
-  const timeoutTimer = setTimeout(() => {
-    if (!completed) {
-      log(endpoint, { reqId, error: ERR.OPENAI_TIMEOUT });
-      controller.abort();
-      try {
-        res.write(`data: ${JSON.stringify({ error: ERR.OPENAI_TIMEOUT })}\n\n`);
-        res.end();
-      } catch (_) { /* client already gone */ }
-    }
-  }, 25_000);
-
-  req.on("close", () => {
-    if (!completed) {
-      log(endpoint, { reqId, info: "client disconnected — aborting upstream request" });
-      controller.abort();
-      clearTimeout(timeoutTimer);
-    }
-  });
-
-  // ── 5. Stream from OpenAI ──────────────────────────────────
-  const t0 = Date.now();
-
-  try {
-    const stream = await openai.chat.completions.create(
-      { model: "gpt-4o-mini", messages: messagesWithSystem, stream: true },
-      { signal: controller.signal }
-    );
-
-    for await (const chunk of stream) {
-      if (controller.signal.aborted) break;
-
-      const token = chunk.choices[0]?.delta?.content;
-      if (token) {
-        res.write(`data: ${JSON.stringify({ t: token })}\n\n`);
-      }
-    }
-
-    completed = true;
-    clearTimeout(timeoutTimer);
-
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    log(endpoint, { reqId, "OpenAI response time": `${elapsed}s`, status: "done" });
-
-    res.write("data: [DONE]\n\n");
-    res.end();
-
-  } catch (err) {
-    completed = true;
-    clearTimeout(timeoutTimer);
-
-    if (err.name === "AbortError") {
-      try { res.end(); } catch (_) { /* already closed */ }
-      return;
-    }
-
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    log(endpoint, {
-      reqId,
-      error:   ERR.OPENAI_FAILED,
-      detail:  err.message,
-      elapsed: `${elapsed}s`,
-    });
-
-    try {
-      res.write(`data: ${JSON.stringify({ error: ERR.OPENAI_FAILED })}\n\n`);
-      res.end();
-    } catch (_) { /* client already gone */ }
-  }
-});
-
-/* ─────────────────────────────────────────────────────────────
-   POST /api/chat — non-streaming reflection (fallback)
+   POST /api/chat — simple, stable AI response
 ───────────────────────────────────────────────────────────── */
 app.post("/api/chat", async (req, res) => {
-  const endpoint = "POST /api/chat";
-  const reqId    = makeReqId();
-
-  const invalid = validateMessages(req.body);
-  if (invalid) {
-    log(endpoint, { reqId, error: invalid.code });
-    return res.status(400).json({ error: invalid.code });
-  }
-
-  const { messages } = req.body;
-  log(endpoint, { reqId, messages: messages.length });
-  const t0 = Date.now();
-
   try {
-    const reply   = await callOpenAI(messages);
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    log(endpoint, { reqId, "OpenAI response time": `${elapsed}s` });
-    res.json({ reply });
-
+    const { messages } = req.body;
+    const completion = await openai.chat.completions.create({
+      model:    "gpt-4o-mini",
+      messages,
+    });
+    const text = completion.choices[0].message.content;
+    res.json({ content: text });
   } catch (err) {
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    const code    = err.message === ERR.OPENAI_TIMEOUT ? ERR.OPENAI_TIMEOUT : ERR.OPENAI_FAILED;
-    log(endpoint, { reqId, error: code, detail: err.message, elapsed: `${elapsed}s` });
-    res.status(500).json({ error: code });
+    console.error("AI ERROR:", err);
+    res.status(500).json({ error: "AI_RESPONSE_FAILED" });
   }
 });
 
