@@ -451,8 +451,31 @@ Never:
 CONVERSATION LENGTH
 ━━━━━━━━━━━━━━━━━━━━━━━
 
-After ~10–12 meaningful exchanges:
+CONVERSATION END CONDITION (CRITICAL)
 
+End the conversation IMMEDIATELY when:
+
+- the user repeats themselves (e.g. "ich weiß es nicht")
+- the core problem is already clear
+- the user reaches a decision
+- the conversation stops progressing
+
+DO NOT continue asking questions.
+
+If the user says "ich weiß es nicht" twice:
+→ END immediately
+
+Instead:
+
+1. Deliver the final insight
+2. Then write:
+
+CONVERSATION_COMPLETE
+
+3. Then output the JSON
+
+Hard rule:
+Better to end too early than too late.
 Write:
 
 CONVERSATION_COMPLETE
