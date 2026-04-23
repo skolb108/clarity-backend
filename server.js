@@ -438,9 +438,10 @@ app.post("/api/event", (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/stats?key=XXX — returns full event data
-app.get("/api/stats", (req, res) => {
-  if (req.query.key !== STATS_KEY) return res.status(401).json({ error: "UNAUTHORIZED" });
+// POST /api/stats — key in body, never in URL
+app.post("/api/stats", (req, res) => {
+  const { key } = req.body || {};
+  if (key !== STATS_KEY) return res.status(401).json({ error: "UNAUTHORIZED" });
   res.json(eventData);
 });
 
