@@ -71,20 +71,16 @@ async function callOpenAI(messages, options = {}) {
    SECURITY MIDDLEWARE
 ───────────────────────────────────────────────────────────── */
 
-// Helmet — secure HTTP headers
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-// CORS
 app.use(cors({
-  origin:         process.env.ALLOWED_ORIGIN || "*",
+  origin:         "*",
   methods:        ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
 }));
 
-// Body size limit
 app.use(express.json({ limit: "50kb" }));
 
-// Rate limiter — /api/chat: 60 req / 15min / IP  (12 questions × 5 flows)
 const chatLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 60,
   standardHeaders: true, legacyHeaders: false,
@@ -92,7 +88,6 @@ const chatLimiter = rateLimit({
   skip: () => process.env.NODE_ENV === "development",
 });
 
-// Rate limiter — /api/analyze: 10 req / 15min / IP  (expensive call)
 const analyzeLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 10,
   standardHeaders: true, legacyHeaders: false,
@@ -394,6 +389,59 @@ app.post("/api/reminder", async (req, res) => {
 
   log(endpoint, { reqId, email, type });
   res.json({ ok: true });
+});
+
+/* ─────────────────────────────────────────────────────────────
+   ANALYTICS — anonymous event counting
+   No cookies, no IP logging, no personal data.
+   Persisted to events.json on disk (survives restarts, resets on redeploy).
+───────────────────────────────────────────────────────────── */
+import { readFileSync, writeFileSync, existsSync } from "fs";
+
+const EVENTS_FILE = "./events.json";
+const STATS_KEY   = process.env.STATS_KEY || "clarity-stats";
+
+const EVENT_NAMES = new Set([
+  "flow_start",
+  "question_1",  "question_2",  "question_3",  "question_4",
+  "question_5",  "question_6",  "question_7",  "question_8",
+  "question_9",  "question_10", "question_11", "question_12",
+  "flow_complete",
+  "share_opened",
+  "share_tapped",
+]);
+
+function loadEvents() {
+  try {
+    if (existsSync(EVENTS_FILE)) return JSON.parse(readFileSync(EVENTS_FILE, "utf8"));
+  } catch (_) {}
+  return { totals: {}, daily: {} };
+}
+
+function saveEvents(data) {
+  try { writeFileSync(EVENTS_FILE, JSON.stringify(data), "utf8"); } catch (_) {}
+}
+
+let eventData = loadEvents();
+
+// POST /api/event — { name: "flow_start" }
+app.post("/api/event", (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !EVENT_NAMES.has(name)) return res.status(400).json({ error: "INVALID_EVENT" });
+
+  const today = new Date().toISOString().slice(0, 10);
+  eventData.totals[name]        = (eventData.totals[name] || 0) + 1;
+  eventData.daily[today]        = eventData.daily[today] || {};
+  eventData.daily[today][name]  = (eventData.daily[today][name] || 0) + 1;
+  saveEvents(eventData);
+
+  res.json({ ok: true });
+});
+
+// GET /api/stats?key=XXX — returns full event data
+app.get("/api/stats", (req, res) => {
+  if (req.query.key !== STATS_KEY) return res.status(401).json({ error: "UNAUTHORIZED" });
+  res.json(eventData);
 });
 
 /* ─────────────────────────────────────────────────────────────
