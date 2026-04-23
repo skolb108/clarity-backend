@@ -1,7 +1,9 @@
-import express from "express";
-import cors    from "cors";
-import dotenv  from "dotenv";
-import OpenAI  from "openai";
+import express   from "express";
+import cors      from "cors";
+import dotenv    from "dotenv";
+import OpenAI    from "openai";
+import helmet    from "helmet";
+import rateLimit from "express-rate-limit";
 
 dotenv.config();
 
@@ -66,14 +68,37 @@ async function callOpenAI(messages, options = {}) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   CORS + JSON
+   SECURITY MIDDLEWARE
 ───────────────────────────────────────────────────────────── */
+
+// Helmet — secure HTTP headers
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+
+// CORS
 app.use(cors({
-  origin:         "*",
+  origin:         process.env.ALLOWED_ORIGIN || "*",
   methods:        ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
 }));
-app.use(express.json());
+
+// Body size limit
+app.use(express.json({ limit: "50kb" }));
+
+// Rate limiter — /api/chat: 60 req / 15min / IP  (12 questions × 5 flows)
+const chatLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 60,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: "TOO_MANY_REQUESTS" },
+  skip: () => process.env.NODE_ENV === "development",
+});
+
+// Rate limiter — /api/analyze: 10 req / 15min / IP  (expensive call)
+const analyzeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: "TOO_MANY_REQUESTS" },
+  skip: () => process.env.NODE_ENV === "development",
+});
 
 /* ─────────────────────────────────────────────────────────────
    /api/chat — CONVERSATIONAL ONLY
@@ -134,7 +159,7 @@ Wenn sie klingt wie etwas, das ein klarer Freund sagen würde, ist sie richtig.`
 
 app.get("/", (req, res) => res.send("Clarity backend running"));
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", chatLimiter, async (req, res) => {
   const endpoint = "POST /api/chat";
   const reqId    = makeReqId();
 
@@ -303,7 +328,7 @@ Antworte NUR mit validem JSON. Kein Markdown.
   }
 }`;
 
-app.post("/api/analyze", async (req, res) => {
+app.post("/api/analyze", analyzeLimiter, async (req, res) => {
   const endpoint = "POST /api/analyze";
   const reqId    = makeReqId();
 
