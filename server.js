@@ -249,6 +249,8 @@ function isLowQualityResult(result) {
   try {
     const { headline, mirror, tension, shift } = result;
     if (!headline || !mirror || !tension || !shift) return true;
+    if (!result.reflection) return true;
+    if (result.reflection.length < 20) return true;
     const text = `${headline} ${mirror} ${tension}`.toLowerCase();
     const generic = [
       "du willst", "du bist", "du hast potenzial",
@@ -729,8 +731,9 @@ STRUKTUR (IMMER JSON)
 ━━━━━━━━━━━━━━━━━━━━━━━
 {
   "headline": "<1 kurzer, klarer Satz (max 12 Wörter)>",
-  "mirror":   "<1–2 Sätze, konkret, basiert auf echten Aussagen>",
-  "tension":  "<1 Satz, zeigt klaren Widerspruch (X aber Y) oder konkretes Ausweichen>",
+  "mirror":   "<1–2 Sätze, konkret beobachtbares Verhalten>",
+  "reflection": "<1 kurzer Satz, verdichtet die Bedeutung oder Konsequenz>",
+  "tension":  "<1 Satz, klarer Widerspruch (X aber Y) oder Ausweichen>",
   "shift":    "<1 Frage, öffnet — keine Lösung>"
 }
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -767,6 +770,15 @@ HARTE REGELN
    ❌ "Mehr Klarheit gewinnen"
    ✅ "Du weißt mehr, als du gerade zulässt."
    ✅ "Du gehst im Kreis, obwohl du es siehst."
+11. REFLECTION IST VERDICHTUNG — KEINE ERKLÄRUNG
+   Die reflection zeigt, was das Verhalten bedeutet oder verursacht.
+   ❌ "weil du Angst hast"
+   ❌ "das liegt daran"
+   ✅ "und genau dadurch bleibt es unsichtbar"
+   ✅ "und damit drehst du dich weiter im Kreis"
+12. KEIN EXTRA TEXT
+   Die zusätzliche "reflection" darf den Output nicht deutlich länger machen.
+   Jeder Satz muss notwendig sein.
 ━━━━━━━━━━━━━━━━━━━━━━━
 INPUT
 ━━━━━━━━━━━━━━━━━━━━━━━
