@@ -258,6 +258,20 @@ function isLowQualityResult(result) {
     ];
     if (generic.some(p => text.includes(p))) return true;
     if (mirror.length < 40) return true;
+
+    // ❌ Detect forbidden causal language in mirror
+    const forbiddenCausal = ["weil", "deshalb", "darum", "liegt daran"];
+    if (forbiddenCausal.some(w => mirror.toLowerCase().includes(w))) return true;
+
+    // ❌ Detect hidden explanations
+    const softCausal = [
+      "weil du",
+      "weil dir",
+      "weil es",
+      "nicht weil",
+      "sondern weil",
+    ];
+    if (softCausal.some(w => mirror.toLowerCase().includes(w))) return true;
     const tensionSignals = ["aber", "trotzdem", "gleichzeitig"];
     if (!tensionSignals.some(w => tension.toLowerCase().includes(w))) return true;
     return false;
@@ -719,6 +733,16 @@ const CLARITY_RESULT_PROMPT = `
 Du bist Clarity — der letzte Spiegel nach einem Gespräch.
 Deine Aufgabe:
 Verdichte das Gespräch zu einem Ergebnis, das sich exakt nach dieser Person anhört — nicht allgemein.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+TRUTH LOCK (INTERN — NICHT IM OUTPUT)
+━━━━━━━━━━━━━━━━━━━━━━━
+Bevor du das Ergebnis generierst:
+Nimm innerlich an, der User hat bereits eine finale, konfrontierende Frage beantwortet,
+die ihn zur vollen Verantwortung zwingt.
+Diese Frage erscheint NICHT im Output.
+Sie schärft nur die Qualität des Ergebnisses.
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 ZIEL
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -726,16 +750,28 @@ Der Nutzer soll denken:
 "Ja. Genau das bin ich."
 NICHT:
 "Das könnte auf viele zutreffen."
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 STRUKTUR (IMMER JSON)
 ━━━━━━━━━━━━━━━━━━━━━━━
 {
-  "headline": "<1 kurzer, klarer Satz (max 12 Wörter)>",
-  "mirror":   "<1–2 Sätze, konkret beobachtbares Verhalten>",
-  "reflection": "<1 kurzer Satz, verdichtet die Bedeutung oder Konsequenz>",
-  "tension":  "<1 Satz, klarer Widerspruch (X aber Y) oder Ausweichen>",
-  "shift":    "<1 Frage, öffnet — keine Lösung>"
+  "headline":   "<1 kurzer, klarer Satz (max 12 Wörter) — eine Beobachtung, kein Titel>",
+  "mirror":     "<1–2 Sätze, konkret beobachtbares Verhalten, ohne Ursache zu erklären>",
+  "reflection": "<1–2 Sätze, vertieft das Muster basierend auf echten Aussagen — keine Erklärung, erhöht Spannung>",
+  "tension":    "<1 Satz, zeigt klaren Widerspruch (X aber Y) oder konkretes Ausweichen>",
+  "shift":      "<1 Frage, öffnet — keine Lösung>",
+  "versions": {
+    "soft":   "<leichter, reflektierend — gleiche Erkenntnis, sanfterer Ton, max 2 Zeilen>",
+    "direct": "<klar, konfrontierend — gleiche Erkenntnis, direkter Ton, max 2 Zeilen>",
+    "brutal": "<sehr direkt, unangenehm präzise — gleiche Erkenntnis, maximale Direktheit, max 2 Zeilen>"
+  },
+  "share": {
+    "title":   "<max 3 Wörter — identitätsbasiert>",
+    "insight": "<beste Version des Insights — meist direct oder brutal>",
+    "sub":     "<z.B. Explorer Mode, Builder Mode etc.>"
+  }
 }
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 HARTE REGELN
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -758,8 +794,7 @@ HARTE REGELN
    ❌ "der nächste Schritt ist..."
    ✅ "Wovor schützt dich das gerade?"
 7. TENSION IST DER WICHTIGSTE TEIL
-   Die tension muss spürbar sein.
-   Sie soll leicht unangenehm sein.
+   Die tension muss spürbar sein. Sie soll leicht unangenehm sein.
    ❌ "du bist unsicher"
    ❌ "du bist noch nicht ganz klar"
    ✅ "du weißt es eigentlich — gehst aber nicht rein"
@@ -770,6 +805,14 @@ HARTE REGELN
    ❌ "Mehr Klarheit gewinnen"
    ✅ "Du weißt mehr, als du gerade zulässt."
    ✅ "Du gehst im Kreis, obwohl du es siehst."
+9. VERSIONS — GLEICHER KERN, VERSCHIEDENE INTENSITÄT
+   Alle drei versions basieren auf der gleichen Erkenntnis.
+   Nur Ton und Direktheit variieren.
+   Kein Coaching, keine generischen Phrasen.
+10. SHARE MUSS IDENTITÄTSBASIERT SEIN
+   title: kurz, prägnant, wie ein Typ-Label
+   insight: die schärfste, ehrlichste Formulierung
+   sub: der Clarity-Typ (Explorer, Builder etc.)
 11. REFLECTION IST VERDICHTUNG — KEINE ERKLÄRUNG
    Die reflection zeigt, was das Verhalten bedeutet oder verursacht.
    ❌ "weil du Angst hast"
@@ -777,8 +820,20 @@ HARTE REGELN
    ✅ "und genau dadurch bleibt es unsichtbar"
    ✅ "und damit drehst du dich weiter im Kreis"
 12. KEIN EXTRA TEXT
-   Die zusätzliche "reflection" darf den Output nicht deutlich länger machen.
    Jeder Satz muss notwendig sein.
+13. KEINE URSACHEN ERKLÄREN
+   Die Ursache darf NICHT benannt werden.
+   Nur Verhalten und sichtbare Konsequenz.
+14. MIRROR IST REIN BESCHREIBEND
+   VERBOTEN: "weil", "deshalb", "darum", "liegt daran", "du fühlst"
+   ❌ "nicht weil du X bist, sondern weil Y"
+   ✅ "du gehst nah ran — aber gehst nicht rein"
+15. REFLECTION MUSS EINE FOLGE ZEIGEN
+   Reflection beginnt implizit oder explizit mit:
+   "Und genau dadurch...", "Damit...", "So bleibt...", "Und deshalb bleibt..."
+   ❌ "du bist..."  ❌ "das bedeutet..."
+   ✅ "Und genau dadurch bleibst du in der gleichen Situation"
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 INPUT
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -789,6 +844,7 @@ Priorität:
 1. Wiederholungen
 2. Widersprüche
 3. Ausweichverhalten
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 FINAL CHECK (PFLICHT)
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -797,12 +853,12 @@ Bevor du antwortest, prüfe:
 - Klingt es wie Coaching? → NEU schreiben
 - Ist es konkret genug? → NEU schreiben
 - Ist die tension spürbar unangenehm? → wenn nein: neu schreiben
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT
 ━━━━━━━━━━━━━━━━━━━━━━━
 NUR JSON.
-`;
-app.post("/api/analyze", analyzeLimiter, async (req, res) => {
+`;app.post("/api/analyze", analyzeLimiter, async (req, res) => {
   const endpoint = "POST /api/analyze";
   const reqId    = makeReqId();
 
@@ -881,10 +937,11 @@ Wenn es auch zu einem anderen Typ passen könnte → falsch.
     if (!result) {
       console.log("⚠️ Using fallback result");
       result = {
-        headline: parsed.summary || "Etwas passt hier nicht ganz.",
-        mirror:   parsed.pattern || "In deinen Antworten zeigt sich ein Muster.",
-        tension:  "Du siehst es — aber gehst noch nicht wirklich rein.",
-        shift:    "Was hält dich gerade davon ab, das wirklich anzugehen?"
+        headline:   parsed.summary || "Etwas passt hier nicht ganz.",
+        mirror:     parsed.pattern || "In deinen Antworten zeigt sich ein Muster.",
+        reflection: "Und genau dadurch bleibt es, wo es gerade ist.",
+        tension:    "Du siehst es — aber gehst noch nicht wirklich rein.",
+        shift:      "Was hält dich gerade davon ab, das wirklich anzugehen?"
       };
     }
 
