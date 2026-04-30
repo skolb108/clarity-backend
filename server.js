@@ -25,6 +25,37 @@ function makeReqId() {
   return Math.random().toString(36).slice(2, 8);
 }
 
+/* ─────────────────────────────────────────────────────────────
+   Uncertainty detection — prevents decision-type questions
+   when the user expresses not knowing / being unsure
+───────────────────────────────────────────────────────────── */
+function isUncertain(message) {
+  return /weiß nicht|weiss nicht|keine ahnung|unsicher|ich glaube nicht|bin mir nicht sicher|keine vorstellung|weiß ich nicht/i.test(message);
+}
+
+function detectUserState(message) {
+  const m = message.toLowerCase();
+  if (isUncertain(m)) return "UNCERTAIN";
+  if (/eigentlich|ich weiß schon|ich müsste|aber/i.test(m)) {
+    return "CLEAR";
+  }
+  if (/halt|irgendwie|einfach|keine zeit|schwierig/i.test(m)) {
+    return "AVOIDING";
+  }
+  if (/weil|deshalb|macht sinn|logisch|klar ist doch/i.test(m)) {
+    return "DEFENSIVE";
+  }
+  return "CLEAR";
+}
+
+function isAvoiding(message) {
+  return /halt|irgendwie|einfach|keine zeit|schwierig/i.test(message);
+}
+
+function isDefensive(message) {
+  return /weil|deshalb|macht sinn|logisch|klar ist doch/i.test(message);
+}
+
 const ERR = {
   INVALID_BODY:   "INVALID_REQUEST_BODY",
   EMPTY_MESSAGES: "MESSAGES_ARRAY_EMPTY",
@@ -98,52 +129,121 @@ const analyzeLimiter = rateLimit({
 /* ─────────────────────────────────────────────────────────────
    QUALITY GUARD — detects low-quality AI responses
 ───────────────────────────────────────────────────────────── */
-function isLowQuality(responseText) {
+function isLowQuality(responseText, lastUserMessage = "") {
   try {
     const clean = responseText.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(clean);
 
     const q = (parsed.question || "").toLowerCase().trim();
     const r = (parsed.reflection || "").toLowerCase().trim();
+    const state = detectUserState(lastUserMessage);
 
-    // ❌ Missing fields
+    // HARD FAILS — immediate rejection
     if (!q || !r) return true;
 
-    // ❌ Too short
-    if (q.length < 15) return true;
-    if (r.length < 20) return true;
+    // Decision question despite uncertainty — always hard fail
+    if (isUncertain(lastUserMessage)) {
+      const forbidden = [
+        "was wirst du", "was willst du", "was setzt du um",
+        "was wirst du tun", "was entscheidest du", "wofür entscheidest du dich",
+      ];
+      if (forbidden.some(p => q.includes(p))) return true;
+      if (q.includes("umsetzen") || q.includes("anfangen") || q.includes("starten")) return true;
+    }
 
-    // ❌ Generic questions
-    const generic = [
-      "was denkst du",
-      "warum ist das wichtig",
-      "wie fühlst du dich",
-      "was meinst du",
-    ];
-    if (generic.some(p => q.includes(p))) return true;
+    // SCORING
+    let score = 0;
 
-    // ❌ No tension
-    const tension = [
-      "aber",
-      "trotzdem",
-      "gleichzeitig",
-      "wovor",
-      "vermeid",
-      "entscheid",
-    ];
+    // Too short (+2)
+    if (q.length < 15) score += 2;
+    if (r.length < 20) score += 2;
 
-    const hasTension =
-      tension.some(w => q.includes(w)) ||
-      tension.some(w => r.includes(w));
+    // Generic questions (+2)
+    const generic = ["was denkst du", "warum ist das wichtig", "wie fühlst du dich", "was meinst du"];
+    if (generic.some(p => q.includes(p))) score += 2;
 
-    if (!hasTension) return true;
+    // Question too long (+2)
+    const wordCount = q.split(" ").filter(Boolean).length;
+    if (wordCount > 15) score += 2;
 
-    return false;
+    // Repetitive weak question starters (+1)
+    const weakRepetitions = ["warum ist", "was denkst du", "was meinst du"];
+    if (weakRepetitions.some(p => q.startsWith(p))) score += 1;
+
+    // No exploratory signal despite uncertainty (+2)
+    if (isUncertain(lastUserMessage)) {
+      const exploratorySignals = ["warum","woran","was macht","was hält","wenn du","was wäre","was fällt","wodurch","wobei"];
+      if (!exploratorySignals.some(p => q.includes(p))) score += 2;
+    }
+
+    // Too abstract when avoiding (+2)
+    if (isAvoiding(lastUserMessage)) {
+      const tooAbstract = ["warum", "was bedeutet", "was denkst du"];
+      if (tooAbstract.some(p => q.includes(p))) score += 2;
+    }
+
+    // CLEAR — weak question without strong signal (+1)
+    if (state === "CLEAR") {
+      const weakSignals   = ["woran", "was genau", "wie genau"];
+      const strongSignals = ["wovor", "warum", "was vermeidest", "was hält dich"];
+      if (weakSignals.some(p => q.includes(p)) && !strongSignals.some(p => q.includes(p))) score += 1;
+    }
+
+    // DEFENSIVE — no challenge signal (+2)
+    if (isDefensive(lastUserMessage)) {
+      const challengeSignals = ["was wäre wenn","stimmt das wirklich","was passiert wenn","was übersiehst du"];
+      if (!challengeSignals.some(p => q.includes(p))) score += 2;
+    }
+
+    // No tension in question or reflection (+2 each)
+    const tension = ["aber","trotzdem","gleichzeitig","wovor","vermeid","entscheid"];
+    if (!tension.some(w => q.includes(w))) score += 2;
+    if (!tension.some(w => r.includes(w))) score += 0.5;
+
+    // Weak connection between reflection and question (+1)
+    const reflectionWords   = r.split(" ").map(w => w.replace(/[^\wäöüß]/g, "")).filter(w => w.length > 4);
+    const hasWordOverlap    = reflectionWords.some(word => q.includes(word));
+    const semanticBridge    = ["wovor","warum","was hält","was vermeidest","was passiert"];
+    const hasSemanticBridge = semanticBridge.some(p => q.includes(p));
+    if (!hasWordOverlap && !hasSemanticBridge) score += 0.5;
+
+    // Reflection doesn't match user state (+2 each)
+
+    if (state === "CLEAR") {
+      const tensionSignals = ["aber","gleichzeitig","und trotzdem"];
+      const altTension     = ["hältst dich zurück","gehst nicht","vermeidest","weißt es","zögerst"];
+      if (!tensionSignals.some(w => r.includes(w)) && !altTension.some(w => r.includes(w))) score += 1.5;
+    }
+
+    if (state === "DEFENSIVE") {
+      const defensiveSignals = ["weil","um zu","damit"];
+      const altDefensive     = ["rechtfertigst","begründest","erklärst weg","schützt dich","machst es logisch"];
+      if (!defensiveSignals.some(w => r.includes(w)) && !altDefensive.some(w => r.includes(w))) score += 1.5;
+    }
+
+    if (state === "AVOIDING") {
+      const vagueSignals = ["irgendwie","unklar","nicht greifbar"];
+      const altVague     = ["weichst","ausweichst","bleibst unklar","gehst nicht klar darauf","bleibst im unkonkreten"];
+      if (!vagueSignals.some(w => r.includes(w)) && !altVague.some(w => r.includes(w))) score += 1.5;
+    }
+
+    if (state === "UNCERTAIN") {
+      const uncertainSignals = ["nicht sicher","unklar","weißt nicht","nicht klar"];
+      const altUncertain     = ["keine antwort","keine richtung","orientierungslos","tastend","suchst noch"];
+      if (!uncertainSignals.some(w => r.includes(w)) && !altUncertain.some(w => r.includes(w))) score += 1.5;
+    }
+
+    let qualityBoost = 0;
+    const hasStrongTension = ["wovor","was vermeidest","was hält dich"].some(p => q.includes(p));
+    const hasConnection    = reflectionWords.some(word => q.includes(word));
+    if (hasStrongTension && hasConnection) qualityBoost -= 1;
+
+    return (score + qualityBoost) >= 5;
+
   } catch (e) {
     return true;
   }
 }
-
 /* ─────────────────────────────────────────────────────────────
    /api/chat — CONVERSATIONAL ONLY
    ─────────────────────────────────────────────────────────────
@@ -257,6 +357,21 @@ Wenn es sich wie ein Bot anfühlt → falsch
 Wenn es sich wie ein klarer, ehrlicher Mensch anfühlt → richtig
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+UNSICHERHEIT
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Wenn der User Unsicherheit ausdrückt (z.B. "ich weiß nicht", "keine Ahnung", "bin mir nicht sicher"):
+
+- Stelle KEINE Entscheidungsfrage (z.B. "Was wirst du jetzt tun?")
+- Stelle stattdessen eine Erkundungsfrage, die hilft die Unklarheit zu beleuchten
+- Ziel: Die Unsicherheit selbst sichtbar machen, nicht überspringen
+
+Beispiele bei Unsicherheit (gut):
+"Was wäre, wenn du es wüsstest — was würdest du dann sagen?"
+"Wovor schützt dich dieses Nicht-Wissen gerade?"
+"Was fühlt sich an dieser Unsicherheit vertraut an?"
+
+━━━━━━━━━━━━━━━━━━━━━━━
 MEMORY (SEHR WICHTIG)
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -304,13 +419,82 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
 
   const { messages } = req.body;
   const lastTwoUser = messages
-  .filter(m => m.role === "user")
+  .filter(m => m.role === "user" && m.content && m.content.trim())
   .slice(-2);
 
-const memoryContext = {
-  role: "system",
-  content: `Letzte Aussagen des Users:\n${lastTwoUser.map(m => m.content).join("\n")}`
-};
+const memoryContext = lastTwoUser.length
+  ? {
+      role: "system",
+      content: `Letzte Aussagen des Users:\n${lastTwoUser.map(m => m.content).join("\n")}`
+    }
+  : null;
+
+  // Uncertainty guard — if last user message expresses not knowing,
+  // inject a system hint to steer away from decision-type questions
+  const lastUserMessage = messages
+    .filter(m => m.role === "user")
+    .slice(-1)[0]?.content || "";
+
+  const state = detectUserState(lastUserMessage);
+
+  const progressionHint = {
+    role: "system",
+    content: `
+GESPRÄCHSENTWICKLUNG:
+Achte darauf, dass sich das Gespräch wirklich weiterentwickelt.
+Wenn ein Thema bereits angesprochen wurde:
+- gehe tiefer statt es neu zu formulieren
+- stelle KEINE ähnliche Frage erneut
+Wenn sich ein Muster zeigt:
+- benenne es klar
+- stelle eine Frage, die es zuspitzt
+Vermeide:
+- gleiche Satzstruktur
+- gleiche Frageform (z.B. mehrfach "Warum...")
+Ziel:
+Jede Frage fühlt sich wie ein echter nächster Schritt an — nicht wie eine Variation.
+`,
+  };
+
+  const stateHint = {
+    role: "system",
+    content: `
+USER STATE: ${state}
+WICHTIGE ANPASSUNG:
+Passe deine Antwort zwingend an diesen Zustand an.
+UNCERTAIN:
+- mache die Unsicherheit greifbarer
+- keine Richtung oder Entscheidung
+AVOIDING:
+- werde konkret
+- bringe den User zu einer klaren Situation
+CLEAR:
+- erhöhe die Spannung
+- stelle eine konfrontierendere Frage
+DEFENSIVE:
+- hinterfrage die Begründung
+- zeige möglichen Selbstschutz
+Wenn deine Frage nicht zum Zustand passt, ist sie falsch.
+`,
+  };
+
+  const uncertaintyHint = isUncertain(lastUserMessage)
+    ? [{
+        role: "system",
+        content: `
+HARTE REGEL (HÖCHSTE PRIORITÄT):
+Der User hat Unsicherheit ausgedrückt.
+Du DARFST KEINE Entscheidungsfrage stellen.
+Du DARFST KEINE Frage stellen, die Handlung voraussetzt.
+ERLAUBT sind NUR Fragen, die:
+- die Unsicherheit genauer machen
+- einen vorsichtigen Zugang öffnen
+- helfen, etwas greifbarer zu machen
+Wenn deine Frage auf Handlung oder Entscheidung abzielt, ist sie FALSCH.
+Formuliere die Frage neu.
+`,
+      }]
+    : [];
   log(endpoint, { reqId, messages: messages.length });
 
   try {
@@ -319,21 +503,44 @@ const memoryContext = {
 for (let attempt = 0; attempt < 2; attempt++) {
   text = await callOpenAI([
   { role: "system", content: CLARITY_SYSTEM_PROMPT },
-  memoryContext,
+  progressionHint,
+  ...(memoryContext ? [memoryContext] : []),
   ...messages,
+  stateHint,
+  ...uncertaintyHint,
     ...(attempt === 1 ? [{
       role: "system",
-      content: "Die letzte Antwort war zu generisch oder nicht präzise genug. Antworte konkreter, verbundener und mit klarer Spannung."
+      content: `
+Formuliere die Antwort neu und klarer.
+Achte darauf:
+- Die Reflection zeigt einen echten Zusammenhang
+- Die Frage baut logisch darauf auf
+- Die Sprache bleibt natürlich und direkt
+- Vermeide ähnliche Struktur wie zuvor
+WICHTIG:
+- Wähle einen leicht anderen Blickwinkel als zuvor
+- Hinterfrage ggf. eine andere Facette der Situation
+Vermeide generische Formulierungen.
+`
     }] : [])
   ]);
 
-  const lowQuality = isLowQuality(text);
+  const lowQuality = isLowQuality(text, lastUserMessage);
 
 if (!lowQuality) break;
 
 if (lowQuality && attempt === 0) {
   console.log("⚠️ Low quality response → retrying...");
 }
+}
+
+if (!text) {
+  return res.status(500).json({ error: "EMPTY_AI_RESPONSE" });
+}
+
+const finalLowQuality = isLowQuality(text, lastUserMessage);
+if (finalLowQuality) {
+  console.log("❌ Final response still low quality after retry");
 }
 
 res.json({ content: text });
