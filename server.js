@@ -244,6 +244,25 @@ function isLowQuality(responseText, lastUserMessage = "") {
     return true;
   }
 }
+
+function isLowQualityResult(result) {
+  try {
+    const { headline, mirror, tension, shift } = result;
+    if (!headline || !mirror || !tension || !shift) return true;
+    const text = `${headline} ${mirror} ${tension}`.toLowerCase();
+    const generic = [
+      "du willst", "du bist", "du hast potenzial",
+      "du versuchst", "du möchtest"
+    ];
+    if (generic.some(p => text.includes(p))) return true;
+    if (mirror.length < 40) return true;
+    const tensionSignals = ["aber", "trotzdem", "gleichzeitig"];
+    if (!tensionSignals.some(w => tension.toLowerCase().includes(w))) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
 /* ─────────────────────────────────────────────────────────────
    /api/chat — CONVERSATIONAL ONLY
    ─────────────────────────────────────────────────────────────
@@ -694,6 +713,83 @@ Antworte NUR mit validem JSON. Kein Markdown.
   }
 }`;
 
+const CLARITY_RESULT_PROMPT = `
+Du bist Clarity — der letzte Spiegel nach einem Gespräch.
+Deine Aufgabe:
+Verdichte das Gespräch zu einem Ergebnis, das sich exakt nach dieser Person anhört — nicht allgemein.
+━━━━━━━━━━━━━━━━━━━━━━━
+ZIEL
+━━━━━━━━━━━━━━━━━━━━━━━
+Der Nutzer soll denken:
+"Ja. Genau das bin ich."
+NICHT:
+"Das könnte auf viele zutreffen."
+━━━━━━━━━━━━━━━━━━━━━━━
+STRUKTUR (IMMER JSON)
+━━━━━━━━━━━━━━━━━━━━━━━
+{
+  "headline": "<1 kurzer, klarer Satz (max 12 Wörter)>",
+  "mirror":   "<1–2 Sätze, konkret, basiert auf echten Aussagen>",
+  "tension":  "<1 Satz, zeigt klaren Widerspruch (X aber Y) oder konkretes Ausweichen>",
+  "shift":    "<1 Frage, öffnet — keine Lösung>"
+}
+━━━━━━━━━━━━━━━━━━━━━━━
+HARTE REGELN
+━━━━━━━━━━━━━━━━━━━━━━━
+1. KEINE GENERISCHEN PHRASEN
+   ❌ "du willst dich verbessern"
+   ❌ "du bist unsicher"
+   ❌ "du hast Potenzial"
+2. NUTZE KONKRETE SPRACHE AUS DEM GESPRÄCH
+   Wenn möglich, übernimm Wörter oder Formulierungen des Users.
+3. ZEIGE KONKRETES VERHALTEN
+   ❌ abstrakt: "du hältst dich zurück"
+   ✅ konkret: "du denkst viel darüber nach — gehst aber nicht los"
+4. KEINE ERKLÄRUNGEN
+   ❌ "weil du Angst hast"
+   ❌ "das liegt daran"
+   Nur zeigen.
+5. JEDE ZEILE MUSS EINE BEOBACHTUNG SEIN
+6. SHIFT IST KEIN COACHING
+   ❌ "du könntest jetzt..."
+   ❌ "der nächste Schritt ist..."
+   ✅ "Wovor schützt dich das gerade?"
+7. TENSION IST DER WICHTIGSTE TEIL
+   Die tension muss spürbar sein.
+   Sie soll leicht unangenehm sein.
+   ❌ "du bist unsicher"
+   ❌ "du bist noch nicht ganz klar"
+   ✅ "du weißt es eigentlich — gehst aber nicht rein"
+   ✅ "du denkst darüber nach — vermeidest aber den Schritt"
+8. HEADLINE IST KEIN TITEL
+   Sie ist eine Beobachtung.
+   ❌ "Dein Muster"
+   ❌ "Mehr Klarheit gewinnen"
+   ✅ "Du weißt mehr, als du gerade zulässt."
+   ✅ "Du gehst im Kreis, obwohl du es siehst."
+━━━━━━━━━━━━━━━━━━━━━━━
+INPUT
+━━━━━━━━━━━━━━━━━━━━━━━
+Nutze:
+- komplette conversation
+- Analyse (summary, pattern, type)
+Priorität:
+1. Wiederholungen
+2. Widersprüche
+3. Ausweichverhalten
+━━━━━━━━━━━━━━━━━━━━━━━
+FINAL CHECK (PFLICHT)
+━━━━━━━━━━━━━━━━━━━━━━━
+Bevor du antwortest, prüfe:
+- Könnte das auf viele Menschen passen? → NEU schreiben
+- Klingt es wie Coaching? → NEU schreiben
+- Ist es konkret genug? → NEU schreiben
+- Ist die tension spürbar unangenehm? → wenn nein: neu schreiben
+━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT
+━━━━━━━━━━━━━━━━━━━━━━━
+NUR JSON.
+`;
 app.post("/api/analyze", analyzeLimiter, async (req, res) => {
   const endpoint = "POST /api/analyze";
   const reqId    = makeReqId();
@@ -735,10 +831,58 @@ app.post("/api/analyze", analyzeLimiter, async (req, res) => {
 
     const raw     = await callOpenAI(analysisMessages, { jsonMode: true });
     const parsed  = JSON.parse(raw);
+
+    // Step 3: Generate result (mirror / tension / shift)
+    let result = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resultMessages = [
+          { role: "system", content: CLARITY_RESULT_PROMPT },
+          ...messages,
+          {
+            role: "system",
+            content: `
+ANALYSE (VERBINDLICH):
+Typ: ${parsed.identityModes?.[0]?.type}
+Summary: ${parsed.summary}
+Pattern: ${parsed.pattern}
+WICHTIG:
+Das Ergebnis MUSS klar diesen Typ widerspiegeln.
+Wenn es auch zu einem anderen Typ passen könnte → falsch.
+`
+          }
+        ];
+        const resultRaw    = await callOpenAI(resultMessages, { jsonMode: true });
+        const parsedResult = JSON.parse(resultRaw);
+        if (!isLowQualityResult(parsedResult)) {
+          result = parsedResult;
+          break;
+        }
+        if (attempt === 0) {
+          console.log("⚠️ Low quality result → retrying...");
+        }
+      } catch (e) {
+        log(endpoint, { reqId, warning: `result generation failed: ${e.message}` });
+      }
+    }
+
+    if (!result) {
+      console.log("⚠️ Using fallback result");
+      result = {
+        headline: parsed.summary || "Etwas passt hier nicht ganz.",
+        mirror:   parsed.pattern || "In deinen Antworten zeigt sich ein Muster.",
+        tension:  "Du siehst es — aber gehst noch nicht wirklich rein.",
+        shift:    "Was hält dich gerade davon ab, das wirklich anzugehen?"
+      };
+    }
+
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
     log(endpoint, { reqId, elapsed: `${elapsed}s`, type: parsed.identityModes?.[0]?.type });
-    res.json(parsed);
+    res.json({
+      ...parsed,
+      result
+    });
 
   } catch (err) {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
