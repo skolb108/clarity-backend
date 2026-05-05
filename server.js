@@ -159,7 +159,7 @@ function isLowQuality(responseText, lastUserMessage = "") {
     if (r.length < 20) score += 2;
 
     // Generic questions (+2)
-    const generic = ["was denkst du", "warum ist das wichtig", "wie fühlst du dich", "was meinst du"];
+    const generic = ["was denkst du", "was meinst du"];
     if (generic.some(p => q.includes(p))) score += 2;
 
     // Question too long (+2)
@@ -182,23 +182,11 @@ function isLowQuality(responseText, lastUserMessage = "") {
       if (tooAbstract.some(p => q.includes(p))) score += 2;
     }
 
-    // CLEAR — weak question without strong signal (+1)
-    if (state === "CLEAR") {
-      const weakSignals   = ["woran", "was genau", "wie genau"];
-      const strongSignals = ["wovor", "warum", "was vermeidest", "was hält dich"];
-      if (weakSignals.some(p => q.includes(p)) && !strongSignals.some(p => q.includes(p))) score += 1;
-    }
-
     // DEFENSIVE — no challenge signal (+2)
     if (isDefensive(lastUserMessage)) {
       const challengeSignals = ["was wäre wenn","stimmt das wirklich","was passiert wenn","was übersiehst du"];
       if (!challengeSignals.some(p => q.includes(p))) score += 2;
     }
-
-    // No tension in question or reflection (+2 each)
-    const tension = ["aber","trotzdem","gleichzeitig","wovor","vermeid","entscheid"];
-    if (!tension.some(w => q.includes(w))) score += 2;
-    if (!tension.some(w => r.includes(w))) score += 0.5;
 
     // Weak connection between reflection and question (+1)
     const reflectionWords   = r.split(" ").map(w => w.replace(/[^\wäöüß]/g, "")).filter(w => w.length > 4);
@@ -237,6 +225,19 @@ function isLowQuality(responseText, lastUserMessage = "") {
     const hasStrongTension = ["wovor","was vermeidest","was hält dich"].some(p => q.includes(p));
     const hasConnection    = reflectionWords.some(word => q.includes(word));
     if (hasStrongTension && hasConnection) qualityBoost -= 1;
+
+    // SOFT QUESTION BOOST (important)
+    if (
+      !q.includes("warum") &&
+      !q.includes("wovor") &&
+      !q.includes("was hält dich") &&
+      !q.includes("vermeid")
+    ) {
+      score -= 1.5;
+    }
+    if (q.split(" ").length <= 10) {
+      score -= 1;
+    }
 
     return (score + qualityBoost) >= 5;
 
@@ -360,21 +361,30 @@ Antworte IMMER mit:
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-REFLECTION (entscheidend)
+REFLECTION (NEU)
 ━━━━━━━━━━━━━━━━━━━━━━━
 
-Die Reflection soll:
+Die Reflection ist bewusst leicht und zurückhaltend.
 
-- zeigen, dass du wirklich verstanden hast
-- mindestens 2 Elemente verbinden
-- eine Spannung oder Richtung sichtbar machen
-- darf interpretieren — aber nur aus dem Gesagten
+Regeln:
 
-GUTE REFLECTION:
-"Du willst Klarheit, hältst aber gleichzeitig mehrere Optionen offen."
+- max 10–12 Wörter
+- KEINE tiefe Interpretation
+- KEINE psychologische Deutung
+- KEINE starke Spannung
+- beschreibend, nicht erklärend
+
+Ziel:
+→ zeigen, dass du zugehört hast
+→ NICHT zeigen, dass du den User analysiert hast
+
+GUT:
+"Du denkst über Veränderung nach und erwähnst Sicherheit."
+"Du hast etwas verändert, aber das Thema bleibt präsent."
 
 SCHLECHT:
-"Du hast gesagt, dass dir Klarheit wichtig ist."
+"Du vermeidest Veränderung aus Angst."
+"Du hältst dich selbst zurück."
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 FRAGE
@@ -408,6 +418,37 @@ Regeln:
 - max 15 Wörter
 - keine Doppelfrage
 - keine generischen Fragen
+
+━━━━━━━━━━━━━━━━━━━━━━━
+FRAGETYPEN (SEHR WICHTIG)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Du variierst bewusst zwischen 4 Fragetypen:
+
+1. CONTEXT (leicht, konkret)
+→ "Was genau meinst du mit …?"
+→ "Wie sieht das konkret bei dir aus?"
+
+2. CLARIFY (strukturierend)
+→ "Geht es dir eher um X oder Y?"
+→ "Ist das mehr A oder B für dich?"
+
+3. REFLECT (weich, öffnend)
+→ "Wenn du das so sagst — was fällt dir daran auf?"
+
+4. DEPTH (später, optional)
+→ "Was vermeidest du gerade?"
+
+Regel:
+
+- Verwende NICHT immer den gleichen Fragetyp
+- Vermeide Wiederholung von "Warum" oder "Was hält dich"
+- Frühe Phase → CONTEXT + CLARIFY
+- Mittlere Phase → CLARIFY + REFLECT
+- Späte Phase → REFLECT + selten DEPTH
+
+KRITISCH:
+Wenn 2 Fragen hintereinander ähnlich klingen → die zweite ist falsch
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 CONNECTION
@@ -462,6 +503,16 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
   }
 
   const { messages } = req.body;
+
+  // ── 1. QUESTION COUNTER ──────────────────────────────────────
+  const questionCount = messages.filter(m => m.role === "assistant").length;
+
+  // ── 4. HARD STOP ─────────────────────────────────────────────
+  if (questionCount >= 18) {
+    log(endpoint, { reqId, info: "hard stop — questionCount >= 18" });
+    return res.json({ done: true });
+  }
+
   const lastTwoUser = messages
   .filter(m => m.role === "user" && m.content && m.content.trim())
   .slice(-2);
@@ -497,6 +548,67 @@ Vermeide:
 - gleiche Frageform (z.B. mehrfach "Warum...")
 Ziel:
 Jede Frage fühlt sich wie ein echter nächster Schritt an — nicht wie eine Variation.
+`,
+  };
+
+  // ── 2. PHASE STEERING ────────────────────────────────────────
+  const phaseHint = {
+    role: "system",
+    content: `
+CURRENT QUESTION: ${questionCount}
+PHASEN (VERBINDLICH):
+1–4:
+Nur verstehen.
+KEINE Interpretation.
+KEINE "warum" Fragen.
+5–8:
+Validieren.
+Stelle mindestens 2 echte Validierungsfragen.
+("Liege ich richtig, dass …?")
+9–13:
+Muster erkennen.
+Zeige Wiederholungen aus echten Antworten.
+14–16:
+Identität.
+"Was sagt das über dich?"
+17–18:
+Abrunden.
+KEINE neuen Themen.
+HARTE REGEL:
+Wenn du eine ähnliche Frage wie zuvor stellst:
+→ FALSCH
+Wenn die Frage kein neuer Gedanke ist:
+→ FALSCH
+Wenn du zu früh Tiefe erzwingst:
+→ FALSCH
+`,
+  };
+
+  // ── 3. REPETITION GUARD ───────────────────────────────────────
+  const lastQuestions = messages
+    .filter(m => m.role === "assistant")
+    .slice(-5)
+    .map(m => {
+      try {
+        const clean  = m.content.replace(/```json|```/g, "").trim();
+        const parsed = JSON.parse(clean);
+        return parsed.question || m.content;
+      } catch {
+        return m.content;
+      }
+    })
+    .join("\n");
+
+  const repetitionGuard = {
+    role: "system",
+    content: `
+WIEDERHOLUNGEN VERMEIDEN:
+Diese Fragen wurden bereits gestellt:
+${lastQuestions}
+Stelle KEINE ähnlichen oder leicht umformulierten Fragen.
+Jede neue Frage muss:
+- einen neuen Blickwinkel einführen
+- tiefer gehen ODER die Perspektive wechseln
 `,
   };
 
@@ -539,14 +651,15 @@ Formuliere die Frage neu.
 `,
       }]
     : [];
-  log(endpoint, { reqId, messages: messages.length });
+  log(endpoint, { reqId, messages: messages.length, questionCount });
 
   try {
-    let text;
 
 for (let attempt = 0; attempt < 2; attempt++) {
   text = await callOpenAI([
   { role: "system", content: CLARITY_SYSTEM_PROMPT },
+  phaseHint,
+  repetitionGuard,
   progressionHint,
   ...(memoryContext ? [memoryContext] : []),
   ...messages,
@@ -602,7 +715,7 @@ res.json({ content: text });
    Never called mid-conversation. Only called once at the end.
 ───────────────────────────────────────────────────────────── */
 const ANALYSIS_SYSTEM_PROMPT = `Du analysierst die Antworten aus einem geführten Reflexionsgespräch.
-Du erhältst ein JSON-Objekt mit einem "answers"-Array (12 Antworten).
+Du erhältst ein JSON-Objekt mit einem "answers"-Array (bis zu 18 Antworten).
 
 Antworte NUR mit validem JSON. Kein Markdown. Kein Text davor oder danach.
 
@@ -1012,6 +1125,8 @@ const EVENT_NAMES = new Set([
   "question_1",  "question_2",  "question_3",  "question_4",
   "question_5",  "question_6",  "question_7",  "question_8",
   "question_9",  "question_10", "question_11", "question_12",
+  "question_13", "question_14", "question_15", "question_16",
+  "question_17", "question_18",
   "flow_complete",
   "share_opened",
   "share_tapped",
