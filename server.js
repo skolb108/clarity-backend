@@ -655,7 +655,8 @@ Formuliere die Frage neu.
 
   try {
 
-for (let attempt = 0; attempt < 2; attempt++) {
+  let text;
+  for (let attempt = 0; attempt < 2; attempt++) {
   text = await callOpenAI([
   { role: "system", content: CLARITY_SYSTEM_PROMPT },
   phaseHint,
