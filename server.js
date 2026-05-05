@@ -72,7 +72,7 @@ function validateMessages(body) {
 }
 
 async function callOpenAI(messages, options = {}) {
-  const { retries = 2, jsonMode = false } = options;
+  const { retries = 2, jsonMode = false, temperature, maxTokens } = options;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
@@ -82,7 +82,9 @@ async function callOpenAI(messages, options = {}) {
       const completion = await openai.chat.completions.create({
         model:    "gpt-4o-mini",
         messages,
-        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+        ...(jsonMode     ? { response_format: { type: "json_object" } } : {}),
+        ...(temperature  !== undefined ? { temperature }    : {}),
+        ...(maxTokens    !== undefined ? { max_tokens: maxTokens } : {}),
       }, { signal: controller.signal });
 
       clearTimeout(timer);
@@ -861,140 +863,90 @@ Antworte NUR mit validem JSON. Kein Markdown.
 }`;
 
 const CLARITY_RESULT_PROMPT = `
-Du bist Clarity — der letzte Spiegel nach einem Gespräch.
-Deine Aufgabe:
-Verdichte das Gespräch zu einem Ergebnis, das sich exakt nach dieser Person anhört — nicht allgemein.
+You are not a coach.
+You are not a therapist.
+You are a clarity engine.
 
-━━━━━━━━━━━━━━━━━━━━━━━
-TRUTH LOCK (INTERN — NICHT IM OUTPUT)
-━━━━━━━━━━━━━━━━━━━━━━━
-Bevor du das Ergebnis generierst:
-Nimm innerlich an, der User hat bereits eine finale, konfrontierende Frage beantwortet,
-die ihn zur vollen Verantwortung zwingt.
-Diese Frage erscheint NICHT im Output.
-Sie schärft nur die Qualität des Ergebnisses.
+Your job is to compress a messy human conversation into a sharp, confronting and directional insight.
 
-━━━━━━━━━━━━━━━━━━━━━━━
-ZIEL
-━━━━━━━━━━━━━━━━━━━━━━━
-Der Nutzer soll denken:
-"Ja. Genau das bin ich."
-NICHT:
-"Das könnte auf viele zutreffen."
+The user has already reflected deeply.
+Do NOT repeat obvious insights.
+Do NOT ask questions.
+Do NOT explain.
 
-━━━━━━━━━━━━━━━━━━━━━━━
-STRUKTUR (IMMER JSON)
-━━━━━━━━━━━━━━━━━━━━━━━
-{
-  "headline":   "<1 kurzer, klarer Satz (max 12 Wörter) — eine Beobachtung, kein Titel>",
-  "mirror":     "<1–2 Sätze, konkret beobachtbares Verhalten, ohne Ursache zu erklären>",
-  "reflection": "<1–2 Sätze, vertieft das Muster basierend auf echten Aussagen — keine Erklärung, erhöht Spannung>",
-  "tension":    "<1 Satz, zeigt klaren Widerspruch (X aber Y) oder konkretes Ausweichen>",
-  "shift":      "<1 Frage, öffnet — keine Lösung>",
-  "versions": {
-    "soft":   "<leichter, reflektierend — gleiche Erkenntnis, sanfterer Ton, max 2 Zeilen>",
-    "direct": "<klar, konfrontierend — gleiche Erkenntnis, direkter Ton, max 2 Zeilen>",
-    "brutal": "<sehr direkt, unangenehm präzise — gleiche Erkenntnis, maximale Direktheit, max 2 Zeilen>"
-  },
-  "share": {
-    "title":   "<max 3 Wörter — identitätsbasiert>",
-    "insight": "<beste Version des Insights — meist direct oder brutal>",
-    "sub":     "<z.B. Explorer Mode, Builder Mode etc.>"
-  }
-}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-HARTE REGELN
-━━━━━━━━━━━━━━━━━━━━━━━
-1. KEINE GENERISCHEN PHRASEN
-   ❌ "du willst dich verbessern"
-   ❌ "du bist unsicher"
-   ❌ "du hast Potenzial"
-2. NUTZE KONKRETE SPRACHE AUS DEM GESPRÄCH
-   Wenn möglich, übernimm Wörter oder Formulierungen des Users.
-3. ZEIGE KONKRETES VERHALTEN
-   ❌ abstrakt: "du hältst dich zurück"
-   ✅ konkret: "du denkst viel darüber nach — gehst aber nicht los"
-4. KEINE ERKLÄRUNGEN
-   ❌ "weil du Angst hast"
-   ❌ "das liegt daran"
-   Nur zeigen.
-5. JEDE ZEILE MUSS EINE BEOBACHTUNG SEIN
-6. SHIFT IST KEIN COACHING
-   ❌ "du könntest jetzt..."
-   ❌ "der nächste Schritt ist..."
-   ✅ "Wovor schützt dich das gerade?"
-7. TENSION IST DER WICHTIGSTE TEIL
-   Die tension muss spürbar sein. Sie soll leicht unangenehm sein.
-   ❌ "du bist unsicher"
-   ❌ "du bist noch nicht ganz klar"
-   ✅ "du weißt es eigentlich — gehst aber nicht rein"
-   ✅ "du denkst darüber nach — vermeidest aber den Schritt"
-8. HEADLINE IST KEIN TITEL
-   Sie ist eine Beobachtung.
-   ❌ "Dein Muster"
-   ❌ "Mehr Klarheit gewinnen"
-   ✅ "Du weißt mehr, als du gerade zulässt."
-   ✅ "Du gehst im Kreis, obwohl du es siehst."
-9. VERSIONS — GLEICHER KERN, VERSCHIEDENE INTENSITÄT
-   Alle drei versions basieren auf der gleichen Erkenntnis.
-   Nur Ton und Direktheit variieren.
-   Kein Coaching, keine generischen Phrasen.
-10. SHARE MUSS IDENTITÄTSBASIERT SEIN
-   title: kurz, prägnant, wie ein Typ-Label
-   insight: die schärfste, ehrlichste Formulierung
-   sub: der Clarity-Typ (Explorer, Builder etc.)
-11. REFLECTION IST VERDICHTUNG — KEINE ERKLÄRUNG
-   Die reflection zeigt, was das Verhalten bedeutet oder verursacht.
-   ❌ "weil du Angst hast"
-   ❌ "das liegt daran"
-   ✅ "und genau dadurch bleibt es unsichtbar"
-   ✅ "und damit drehst du dich weiter im Kreis"
-12. KEIN EXTRA TEXT
-   Jeder Satz muss notwendig sein.
-13. KEINE URSACHEN ERKLÄREN
-   Die Ursache darf NICHT benannt werden.
-   Nur Verhalten und sichtbare Konsequenz.
-14. MIRROR IST REIN BESCHREIBEND
-   VERBOTEN: "weil", "deshalb", "darum", "liegt daran", "du fühlst"
-   ❌ "nicht weil du X bist, sondern weil Y"
-   ✅ "du gehst nah ran — aber gehst nicht rein"
-15. REFLECTION MUSS EINE FOLGE ZEIGEN
-   Reflection beginnt implizit oder explizit mit:
-   "Und genau dadurch...", "Damit...", "So bleibt...", "Und deshalb bleibt..."
-   ❌ "du bist..."  ❌ "das bedeutet..."
-   ✅ "Und genau dadurch bleibst du in der gleichen Situation"
-16. DIRECTION MUSS KONKRET SEIN
-   ❌ "geh deinen Weg"
-   ❌ "bleib dran"
-   ✅ "weniger Optionen, mehr Entscheidungen"
-   ✅ "weniger Optimierung, mehr Abschluss"   
+Your output must feel like:
+- recognition
+- slight discomfort
+- direction
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 INPUT
 ━━━━━━━━━━━━━━━━━━━━━━━
-Nutze:
-- komplette conversation
-- Analyse (summary, pattern, type)
-Priorität:
-1. Wiederholungen
-2. Widersprüche
-3. Ausweichverhalten
+You receive a conversation transcript of a user exploring a personal tension.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-FINAL CHECK (PFLICHT)
+YOUR TASK
 ━━━━━━━━━━━━━━━━━━━━━━━
-Bevor du antwortest, prüfe:
-- Könnte das auf viele Menschen passen? → NEU schreiben
-- Klingt es wie Coaching? → NEU schreiben
-- Ist es konkret genug? → NEU schreiben
-- Ist die tension spürbar unangenehm? → wenn nein: neu schreiben
+Extract and produce:
+
+1. CORE TRUTH
+A sharp, confronting statement about what is really happening.
+Max 2 sentences.
+No soft language.
+
+2. IDENTITY
+Who the person actually is when at their best.
+1–2 sentences.
+
+3. DRIVER
+What truly drives them.
+1–2 sentences.
+
+4. PATTERN
+The behavior that keeps them stuck.
+1–2 sentences.
+
+5. PATH
+What actually works for them.
+1–2 sentences.
+
+6. COMPASS
+A short, memorable directional statement.
+Max 2 sentences.
+
+7. VISUAL SIGNAL
+Choose dominant and suppressed from:
+["security","visibility","perfection","freedom","control","expression"]
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT
+OUTPUT FORMAT (JSON ONLY)
 ━━━━━━━━━━━━━━━━━━━━━━━
-NUR JSON.
-`;app.post("/api/analyze", analyzeLimiter, async (req, res) => {
+{
+  "coreTruth": "",
+  "identity": "",
+  "driver": "",
+  "pattern": "",
+  "path": "",
+  "compass": "",
+  "visual": {
+    "dominant": "",
+    "suppressed": ""
+  }
+}
+
+No text before or after the JSON.
+`;
+
+// ── Transcript builder ────────────────────────────────────────
+// Converts the messages array into a clean, readable conversation log
+function buildTranscript(messages) {
+  return messages
+    .filter(m => m.content && m.content.trim())
+    .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+    .join("\n");
+}
+
+app.post("/api/analyze", analyzeLimiter, async (req, res) => {
   const endpoint = "POST /api/analyze";
   const reqId    = makeReqId();
 
@@ -1008,13 +960,17 @@ NUR JSON.
   log(endpoint, { reqId, messages: messages.length });
   const t0 = Date.now();
 
+  // Build clean transcript once — used across all three pipeline steps
+  const transcript = buildTranscript(messages);
+  const transcriptMsg = { role: "user", content: `TRANSCRIPT:\n${transcript}` };
+
   try {
     // Step 1: Signal extraction (graceful fallback)
     let signalsBlock = null;
     try {
       const raw = await callOpenAI([
         { role: "system", content: SIGNAL_EXTRACTION_PROMPT },
-        ...messages,
+        transcriptMsg,
       ], { jsonMode: true });
       signalsBlock = raw;
     } catch (e) {
@@ -1025,38 +981,26 @@ NUR JSON.
     const analysisMessages = signalsBlock
       ? [
           { role: "system", content: ANALYSIS_SYSTEM_PROMPT },
-          ...messages,
+          transcriptMsg,
           { role: "user", content: `Extrahierte Signale:\n${signalsBlock}` },
         ]
       : [
           { role: "system", content: ANALYSIS_SYSTEM_PROMPT },
-          ...messages,
+          transcriptMsg,
         ];
 
     const raw     = await callOpenAI(analysisMessages, { jsonMode: true });
     const parsed  = JSON.parse(raw);
 
-    // Step 3: Generate result (mirror / tension / shift)
+    // Step 3: Generate result — clarity engine only, no diluting context
     let result = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const resultMessages = [
           { role: "system", content: CLARITY_RESULT_PROMPT },
-          ...messages,
-          {
-            role: "system",
-            content: `
-ANALYSE (VERBINDLICH):
-Typ: ${parsed.identityModes?.[0]?.type}
-Summary: ${parsed.summary}
-Pattern: ${parsed.pattern}
-WICHTIG:
-Das Ergebnis MUSS klar diesen Typ widerspiegeln.
-Wenn es auch zu einem anderen Typ passen könnte → falsch.
-`
-          }
+          transcriptMsg,
         ];
-        const resultRaw    = await callOpenAI(resultMessages, { jsonMode: true });
+        const resultRaw    = await callOpenAI(resultMessages, { jsonMode: true, temperature: 0.6, maxTokens: 800 });
         const parsedResult = JSON.parse(resultRaw);
         if (!isLowQualityResult(parsedResult)) {
           result = parsedResult;
@@ -1073,11 +1017,13 @@ Wenn es auch zu einem anderen Typ passen könnte → falsch.
     if (!result) {
       console.log("⚠️ Using fallback result");
       result = {
-        headline:   parsed.summary || "Etwas passt hier nicht ganz.",
-        mirror:     parsed.pattern || "In deinen Antworten zeigt sich ein Muster.",
-        reflection: "Und genau dadurch bleibt es, wo es gerade ist.",
-        tension:    "Du siehst es — aber gehst noch nicht wirklich rein.",
-        shift:      "Was hält dich gerade davon ab, das wirklich anzugehen?"
+        coreTruth: parsed.summary || "Etwas passt hier noch nicht zusammen.",
+        identity:  "Du bist jemand, der mehr weiß, als du gerade zulässt.",
+        driver:    parsed.pattern || "Ein Muster zeigt sich in deinen Antworten.",
+        pattern:   "Du kreist — aber gehst noch nicht rein.",
+        path:      "Weniger Optionen. Mehr Entscheidungen.",
+        compass:   "Du weißt es bereits.",
+        visual:    { dominant: "security", suppressed: "freedom" },
       };
     }
 
