@@ -72,7 +72,7 @@ function validateMessages(body) {
 }
 
 async function callOpenAI(messages, options = {}) {
-  const { retries = 2, jsonMode = false, temperature, maxTokens } = options;
+  const { retries = 2, jsonMode = false, temperature, maxTokens, model = "gpt-4o-mini" } = options;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
@@ -80,7 +80,7 @@ async function callOpenAI(messages, options = {}) {
 
     try {
       const completion = await openai.chat.completions.create({
-        model:    "gpt-4o-mini",
+        model,
         messages,
         ...(jsonMode     ? { response_format: { type: "json_object" } } : {}),
         ...(temperature  !== undefined ? { temperature }    : {}),
@@ -123,6 +123,13 @@ const chatLimiter = rateLimit({
 
 const analyzeLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: "TOO_MANY_REQUESTS" },
+  skip: () => process.env.NODE_ENV === "development",
+});
+
+const compassLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 5,
   standardHeaders: true, legacyHeaders: false,
   message: { error: "TOO_MANY_REQUESTS" },
   skip: () => process.env.NODE_ENV === "development",
@@ -489,8 +496,129 @@ WICHTIGSTE REGEL
 
 Wenn du nicht sicher bist, ob du den User richtig verstanden hast:
 
-→ STELLE KEINE neue Richtung  
+→ STELLE KEINE neue Richtung
 → STELLE EINE VALIDIERUNGSFRAGE`;
+
+/* ─────────────────────────────────────────────────────────────
+   COMPASS CONVERSATION PROMPT
+   Replaced CLARITY_SYSTEM_PROMPT for the Clarity & Freedom Compass flow.
+   Guides the conversation through 4 thematic blocks across 15 questions.
+───────────────────────────────────────────────────────────── */
+const COMPASS_CONVERSATION_PROMPT = `Du bist CLARITY — eine reflektive Intelligenz, kein Coach.
+
+Du führst ein Gespräch, dessen Ziel ein persönlicher Clarity & Freedom Compass ist.
+Dieser Compass wird am Ende aus dem Gespräch generiert.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+DEINE ROLLE
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Du bist kein Assistent. Du gibst keine Ratschläge. Du motivierst nicht.
+Du stellst Fragen, die sichtbar machen, was bereits da ist.
+
+Ton:
+- ruhig, direkt, neugierig
+- kein Lob, keine Bewunderung, keine Ermutigung
+- kein Coaching-Sprech ("du solltest", "versuche", "ich empfehle")
+
+━━━━━━━━━━━━━━━━━━━━━━━
+GESPRÄCHSZIEL
+━━━━━━━━━━━━━━━━━━━━━━━
+
+In 15 Fragen sammelst du Information für 4 Themen-Blöcke:
+
+1. WERTE & MISSION (Fragen 1–4)
+   Was ist diesem Menschen wichtig? Wofür steht er?
+   Ziel: Werte, Überzeugungen, Lebensphilosophie, Mission.
+
+2. PERSÖNLICHKEIT & ENERGIE (Fragen 5–8)
+   Wie ist dieser Mensch aufgebaut? Was gibt, was kostet Energie?
+   Ziel: Stärken, Arbeitsmodus, Spark-Zone, Drain-Zone.
+
+3. ZIELE & CHANCEN (Fragen 9–12)
+   Was will er? Was sieht er gerade nicht?
+   Ziel: kurze/lange Ziele, verborgene Hebel, Hindernisse.
+
+4. ALIGNMENT & WAHRHEIT (Fragen 13–15)
+   Wo stimmt das Leben mit den Werten überein — und wo nicht?
+   Ziel: Kongruenz, blinde Flecken, Unique Truth.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+DEINE AUFGABE
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Antworte IMMER mit:
+
+{
+  "reflection": "<1 kurzer Satz — zeigt, dass du gehört hast (max 20 Wörter)>",
+  "question":   "<1 einzige Frage (max 15 Wörter)>"
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REFLECTION
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Regeln:
+- beschreibend, nicht interpretierend
+- zeigt, dass du die Antwort gehört und eingeordnet hast
+- kein Lob, keine Wertung, keine psychologische Deutung
+- max 20 Wörter
+
+GUT: "Freiheit taucht hier in mehreren Kontexten auf."
+GUT: "Du beschreibst Energie und gleichzeitig klare Grenzen."
+SCHLECHT: "Das klingt wirklich wichtig für dich."
+SCHLECHT: "Das ist tiefgründig — gut, dass du das ansprichst."
+
+━━━━━━━━━━━━━━━━━━━━━━━
+FRAGE
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Regeln:
+- genau 1 Frage
+- max 15 Wörter
+- konkret, nicht abstrakt
+- baut direkt auf der Antwort auf
+- keine Doppelfragen
+
+Wenn eine Antwort vage oder kurz ist:
+→ konkreter nachfragen ("Wie sieht das konkret bei dir aus?")
+
+Wenn eine Antwort klar und vollständig ist:
+→ nächstes Thema explorieren
+
+━━━━━━━━━━━━━━━━━━━━━━━
+FRAGEBEISPIELE PRO PHASE
+━━━━━━━━━━━━━━━━━━━━━━━
+
+WERTE:
+"Wofür würdest du nicht auf Kompromisse eingehen?"
+"Was gibt dir das Gefühl, das Richtige zu tun?"
+"Was ist dein tiefster Antrieb hinter dem, was du tust?"
+
+ENERGIE:
+"Wann bist du am fokussiertesten und produktivsten?"
+"Was kostet dich Energie, ohne etwas zurückzugeben?"
+"In welchen Momenten verlierst du das Zeitgefühl?"
+
+ZIELE:
+"Was willst du in den nächsten 12 Monaten wirklich erreichen?"
+"Was wäre in 5 Jahren ein Erfolg, den du dir heute kaum vorstellen kannst?"
+"Was übersiehst du gerade, das dich entscheidend weiterbringen würde?"
+
+ALIGNMENT:
+"Wo lebst du gerade nicht so, wie du wirklich bist?"
+"Was weißt du über dich, das du noch nicht laut ausgesprochen hast?"
+"Welcher Teil deines Lebens steht am stärksten im Widerspruch zu deinen Werten?"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+WICHTIGSTE REGEL
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Stelle KEINE ähnliche Frage wie zuvor.
+Jede Frage muss einen neuen Blickwinkel öffnen oder tiefer in ein Thema gehen.
+
+Wenn du unsicher bist, ob du den User richtig verstanden hast:
+→ stelle eine konkrete Nachfrage, bevor du das Thema wechselst.`;
 
 app.get("/", (req, res) => res.send("Clarity backend running"));
 
@@ -510,8 +638,8 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
   const questionCount = messages.filter(m => m.role === "assistant").length;
 
   // ── 4. HARD STOP ─────────────────────────────────────────────
-  if (questionCount >= 18) {
-    log(endpoint, { reqId, info: "hard stop — questionCount >= 18" });
+  if (questionCount >= 15) {
+    log(endpoint, { reqId, info: "hard stop — questionCount >= 15" });
     return res.json({ done: true });
   }
 
@@ -558,31 +686,23 @@ Jede Frage fühlt sich wie ein echter nächster Schritt an — nicht wie eine Va
     role: "system",
     content: `
 CURRENT QUESTION: ${questionCount}
-PHASEN (VERBINDLICH):
-1–4:
-Nur verstehen.
-KEINE Interpretation.
-KEINE "warum" Fragen.
-5–8:
-Validieren.
-Stelle mindestens 2 echte Validierungsfragen.
-("Liege ich richtig, dass …?")
-9–13:
-Muster erkennen.
-Zeige Wiederholungen aus echten Antworten.
-14–16:
-Identität.
-"Was sagt das über dich?"
-17–18:
-Abrunden.
-KEINE neuen Themen.
+COMPASS-PHASEN (VERBINDLICH):
+1–4 — WERTE & MISSION
+→ Was ist wichtig? Wofür steht dieser Mensch?
+→ Fragen: offen, einladend, konkret.
+5–8 — PERSÖNLICHKEIT & ENERGIE
+→ Wie ist dieser Mensch aufgebaut? Stärken, Spark-Zone, Drain-Zone.
+→ Fragen: neugierig, beobachtend, konkret.
+9–12 — ZIELE & CHANCEN
+→ Was will er? Was übersieht er?
+→ Fragen: direkt, erforschend.
+13–15 — ALIGNMENT & WAHRHEIT
+→ Wo stimmt das Leben mit den Werten überein — und wo nicht?
+→ Kongruenz, blinde Flecken, tiefste Wahrheit.
+→ Fragen: ruhig, leicht konfrontierend.
 HARTE REGEL:
-Wenn du eine ähnliche Frage wie zuvor stellst:
-→ FALSCH
-Wenn die Frage kein neuer Gedanke ist:
-→ FALSCH
-Wenn du zu früh Tiefe erzwingst:
-→ FALSCH
+Ähnliche Frage wie zuvor → FALSCH
+Frage passt nicht zur aktuellen Phase → FALSCH
 `,
   };
 
@@ -660,7 +780,7 @@ Formuliere die Frage neu.
   let text;
   for (let attempt = 0; attempt < 2; attempt++) {
   text = await callOpenAI([
-  { role: "system", content: CLARITY_SYSTEM_PROMPT },
+  { role: "system", content: COMPASS_CONVERSATION_PROMPT },
   phaseHint,
   repetitionGuard,
   progressionHint,
@@ -1034,6 +1154,217 @@ app.post("/api/analyze", analyzeLimiter, async (req, res) => {
       ...parsed,
       result
     });
+
+  } catch (err) {
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    const code    = err.message === ERR.OPENAI_TIMEOUT ? ERR.OPENAI_TIMEOUT : ERR.OPENAI_FAILED;
+    log(endpoint, { reqId, error: code, detail: err.message, elapsed: `${elapsed}s` });
+    res.status(500).json({ error: code });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────
+   /api/compass — CLARITY & FREEDOM COMPASS GENERATOR
+   ─────────────────────────────────────────────────────────────
+   Receives the full conversation transcript (messages array).
+   Returns a single structured Compass JSON with 12 sections.
+   One AI call. One retry on low quality. No pipeline overhead.
+───────────────────────────────────────────────────────────── */
+
+const COMPASS_GENERATION_PROMPT = `Du bist CLARITY — eine reflektive Intelligenz, kein Coach.
+
+Du erhältst das vollständige Transkript eines geführten Gesprächs zwischen einer KI und einem Nutzer.
+
+Deine Aufgabe:
+Synthetisiere aus diesem Gespräch einen personalisierten "Clarity & Freedom Compass" mit exakt 12 Sektionen.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+DEINE ROLLE
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Du bist kein Therapeut. Du gibst keine Ratschläge. Du motivierst nicht.
+Du machst sichtbar, was bereits da ist — auch wenn es unangenehm ist.
+
+Jede Aussage muss:
+- direkt aus dem Gespräch ableitbar sein (evidenzbasiert, nicht erfunden)
+- spezifisch für DIESEN Menschen sein — kein generischer Content
+- Spannungen beschreiben, nicht erklären oder motivieren
+
+━━━━━━━━━━━━━━━━━━━━━━━
+COPYWRITING-REGELN (VERBINDLICH)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+SCHLECHT: "Du überdenkst alles."
+GUT:      "Du analysierst weiter, lange nachdem die Entscheidung schon emotional ist."
+
+SCHLECHT: "Du vermeidest Sichtbarkeit aus Angst vor Feedback."
+GUT:      "Sichtbarkeit bedeutet für dich Messbarkeit."
+
+VERBOTEN:
+- "unlock your potential", "become your best self", "maximize", "transform yourself"
+- "du solltest", "versuche", "hier ist wie", jede Ratschlags-Sprache
+- Motivationsfloskeln und Coaching-Sprech
+
+PFLICHT für unique_truth, blind_spots, hidden_opportunities:
+→ Sätze, die sich leicht unangenehm anfühlen, aber wahr sind.
+→ Der Nutzer soll innehalten — nicht motiviert, sondern erkannt werden.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT FORMAT (JSON ONLY)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Antworte NUR mit validem JSON. Kein Markdown. Kein Text davor oder danach.
+
+{
+  "core_values": ["<Wert 1>", "<Wert 2>", "<3–8 Kernwerte des Nutzers>"],
+  "beliefs": ["<Überzeugungssatz 1>", "<Überzeugungssatz 2>", "<1–3 Sätze, die beschreiben, woran der Nutzer glaubt>"],
+  "life_philosophy": "<1–2 Sätze: Warum ist dieser Mensch hier? Wie will er wirken?>",
+  "mission_statement": "<1 direkter, unvermeidbarer Satz>",
+  "personality_snapshot": {
+    "style_primary": "<z.B. D – Dominant / strategisch, entscheidungsstark>",
+    "style_secondary": "<z.B. C – Gewissenhaft / präzise, analytisch>",
+    "strengths": ["<Stärke 1>", "<Stärke 2>", "<3–6 konkrete Stärken aus dem Gespräch>"],
+    "leadership_sentence": "<1 Satz zum Führungs- oder Wirkungsstil>"
+  },
+  "zone_of_genius": ["<Du bist am stärksten, wenn du ... (3–5 Punkte)>"],
+  "zone_of_spark": "<1 Absatz: wie sich die natürliche Stärke und Spark-Zone anfühlt>",
+  "spark_zone": ["<Tätigkeit/Umfeld/Ritual das Energie gibt (4–7 Punkte)>"],
+  "drain_zone": ["<Tätigkeit/Umfeld die Energie kostet (3–5 Punkte)>"],
+  "goals_short_term": ["<Ziel 0–12 Monate (3–5 Punkte)>"],
+  "goals_long_term": ["<Vision 3–10 Jahre (3–5 Punkte)>"],
+  "core_driver": "<1–2 Sätze: Was treibt diesen Menschen wirklich an?>",
+  "hidden_opportunities": ["<Übersehener Hebel 1>", "<3–5 Chancen, die der Nutzer gerade nicht sieht>"],
+  "blind_spots": ["<Blinder Fleck 1>", "<3–5 ehrliche, nicht beschämende Punkte>"],
+  "unique_truth": "<1–3 Sätze im Schein-vs-Wahrheit-Muster — leicht unangenehm, spezifisch, wahr>",
+  "alignment_ok": ["<Bereich der bereits stimmt (3–5 Punkte)>"],
+  "alignment_tension": ["<Bereich mit Reibung zwischen Werten und Realität (2–4 Punkte)>"],
+  "alignment_direction": "<1–2 Sätze: Was verlangt die Entwicklung dieses Menschen jetzt?>",
+  "compass_statement": "<2–4 Sätze: verbindet Werte + Genius-Zone + Vermeidungen + Richtung>",
+  "compass_avoid": "<1 Satz: Was soll dieser Mensch vermeiden?>",
+  "compass_direction": "<1 Satz: Wohin zeigt sein Kompass?>",
+  "habit_stack_10_days": {
+    "body": ["<Körper-Habit 1>", "<Körper-Habit 2>"],
+    "mind": ["<Geist/Klarheit-Habit 1>", "<Geist/Klarheit-Habit 2>"],
+    "focus": ["<Fokus/Arbeit-Habit 1>", "<Fokus/Arbeit-Habit 2>"],
+    "relationships": ["<Beziehungs-Habit 1>", "<Beziehungs-Habit 2>"],
+    "money": ["<Geld/Struktur-Habit 1>", "<Geld/Struktur-Habit 2>"]
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+PFLICHTREGELN VOR DEM OUTPUT
+━━━━━━━━━━━━━━━━━━━━━━━
+
+1. unique_truth: Fühlt sich das wie eine echte Erkenntnis an — oder wie eine Beschreibung? Wenn Beschreibung: neu schreiben.
+2. blind_spots: Sind das echte blinde Flecken dieses Menschen — oder könnten sie auf jeden zutreffen? Wenn generisch: neu schreiben.
+3. habit_stack_10_days: Sind die Habits aus dem individuellen Compass abgeleitet — oder generische Tipps? Wenn generisch: neu schreiben.
+4. compass_statement: Enthält es Werte + Genius + Vermeidung + Richtung? Wenn nicht vollständig: ergänzen.
+5. Alle Felder müssen befüllt sein. Kein Feld darf leer, null oder ein leeres Array sein.`;
+
+function isLowQualityCompass(compass) {
+  try {
+    const required = [
+      "core_values", "beliefs", "life_philosophy", "mission_statement",
+      "personality_snapshot", "zone_of_genius", "zone_of_spark",
+      "spark_zone", "drain_zone", "goals_short_term", "goals_long_term",
+      "core_driver", "hidden_opportunities", "blind_spots",
+      "unique_truth", "alignment_ok", "alignment_tension", "alignment_direction",
+      "compass_statement", "compass_avoid", "compass_direction",
+      "habit_stack_10_days",
+    ];
+
+    for (const field of required) {
+      if (compass[field] === undefined || compass[field] === null) return true;
+      if (Array.isArray(compass[field]) && compass[field].length === 0) return true;
+      if (typeof compass[field] === "string" && compass[field].trim().length < 5) return true;
+    }
+
+    const ps = compass.personality_snapshot;
+    if (!ps || !ps.style_primary || !Array.isArray(ps.strengths) || !ps.leadership_sentence) return true;
+    if (ps.strengths.length === 0) return true;
+
+    const hs = compass.habit_stack_10_days;
+    if (!hs || !hs.body || !hs.mind || !hs.focus || !hs.relationships || !hs.money) return true;
+    if ([hs.body, hs.mind, hs.focus, hs.relationships, hs.money].some(a => !Array.isArray(a) || a.length === 0)) return true;
+
+    if (compass.unique_truth.trim().length < 40) return true;
+    if (compass.compass_statement.trim().length < 60) return true;
+
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+app.post("/api/compass", compassLimiter, async (req, res) => {
+  const endpoint = "POST /api/compass";
+  const reqId    = makeReqId();
+
+  const invalid = validateMessages(req.body);
+  if (invalid) {
+    log(endpoint, { reqId, error: invalid.code });
+    return res.status(400).json({ error: invalid.code });
+  }
+
+  const { messages } = req.body;
+  log(endpoint, { reqId, messages: messages.length });
+  const t0 = Date.now();
+
+  const transcript    = buildTranscript(messages);
+  const transcriptMsg = {
+    role:    "user",
+    content: `GESPRÄCHS-TRANSKRIPT:\n\n${transcript}`,
+  };
+
+  try {
+    let compass = null;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const retryHint = attempt === 1
+          ? [{
+              role:    "system",
+              content: `Überprüfe dein JSON vor der Ausgabe:
+- Sind ALLE Felder befüllt (kein leeres Array, kein leerer String)?
+- Ist unique_truth spezifisch und leicht unangenehm (nicht generisch)?
+- Ist habit_stack_10_days individuell auf diesen Menschen zugeschnitten?
+- Enthält compass_statement Werte + Genius + Vermeidung + Richtung?
+Korrigiere und gib das vollständige, valide JSON erneut aus.`,
+            }]
+          : [];
+
+        const raw    = await callOpenAI(
+          [
+            { role: "system", content: COMPASS_GENERATION_PROMPT },
+            transcriptMsg,
+            ...retryHint,
+          ],
+          { jsonMode: true, maxTokens: 2500, retries: 0 }
+        );
+        const parsed = JSON.parse(raw);
+
+        if (!isLowQualityCompass(parsed)) {
+          compass = parsed;
+          break;
+        }
+
+        if (attempt === 0) console.log("⚠️ Low quality compass → retrying...");
+
+      } catch (e) {
+        log(endpoint, { reqId, warning: `compass attempt ${attempt} failed: ${e.message}` });
+        if (attempt === 1) throw e;
+      }
+    }
+
+    if (!compass) {
+      log(endpoint, { reqId, error: "COMPASS_GENERATION_FAILED" });
+      return res.status(500).json({ error: "COMPASS_GENERATION_FAILED" });
+    }
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    log(endpoint, { reqId, elapsed: `${elapsed}s` });
+
+    res.json(compass);
 
   } catch (err) {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
