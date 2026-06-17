@@ -129,7 +129,7 @@ const analyzeLimiter = rateLimit({
 });
 
 const compassLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, max: 5,
+  windowMs: 15 * 60 * 1000, max: 20,
   standardHeaders: true, legacyHeaders: false,
   message: { error: "TOO_MANY_REQUESTS" },
   skip: () => process.env.NODE_ENV === "development",
@@ -1340,7 +1340,7 @@ Korrigiere und gib das vollständige, valide JSON erneut aus.`,
             transcriptMsg,
             ...retryHint,
           ],
-          { jsonMode: true, maxTokens: 2500, retries: 0 }
+          { jsonMode: true, maxTokens: 4000, retries: 0 }
         );
         const parsed = JSON.parse(raw);
 
