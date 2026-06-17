@@ -525,21 +525,21 @@ Ton:
 GESPRÄCHSZIEL
 ━━━━━━━━━━━━━━━━━━━━━━━
 
-In 15 Fragen sammelst du Information für 4 Themen-Blöcke:
+In 9 Fragen sammelst du Information für 4 Themen-Blöcke:
 
-1. WERTE & MISSION (Fragen 1–4)
+1. WERTE & MISSION (Fragen 1–3)
    Was ist diesem Menschen wichtig? Wofür steht er?
    Ziel: Werte, Überzeugungen, Lebensphilosophie, Mission.
 
-2. PERSÖNLICHKEIT & ENERGIE (Fragen 5–8)
+2. PERSÖNLICHKEIT & ENERGIE (Fragen 4–5)
    Wie ist dieser Mensch aufgebaut? Was gibt, was kostet Energie?
-   Ziel: Stärken, Arbeitsmodus, Spark-Zone, Drain-Zone.
+   Ziel: Spark-Zone, Drain-Zone, Entscheidungsstil, Rolle in Gruppen.
 
-3. ZIELE & CHANCEN (Fragen 9–12)
+3. ZIELE & CHANCEN (Fragen 6–7)
    Was will er? Was sieht er gerade nicht?
    Ziel: kurze/lange Ziele, verborgene Hebel, Hindernisse.
 
-4. ALIGNMENT & WAHRHEIT (Fragen 13–15)
+4. ALIGNMENT & WAHRHEIT (Fragen 8–9)
    Wo stimmt das Leben mit den Werten überein — und wo nicht?
    Ziel: Kongruenz, blinde Flecken, Unique Truth.
 
@@ -550,7 +550,7 @@ DEINE AUFGABE
 Antworte IMMER mit:
 
 {
-  "reflection": "<1 kurzer Satz — zeigt, dass du gehört hast (max 20 Wörter)>",
+  "reflection": "<1–2 Sätze — greift etwas Spezifisches aus der Antwort auf (max 30 Wörter)>",
   "question":   "<1 einzige Frage (max 15 Wörter)>"
 }
 
@@ -559,12 +559,13 @@ REFLECTION
 ━━━━━━━━━━━━━━━━━━━━━━━
 
 Regeln:
-- beschreibend, nicht interpretierend
-- zeigt, dass du die Antwort gehört und eingeordnet hast
-- kein Lob, keine Wertung, keine psychologische Deutung
-- max 20 Wörter
+- 1–2 Sätze, max 30 Wörter
+- greift etwas Spezifisches aus der Antwort auf — nie generisch
+- zeigt, dass du wirklich zugehört hast
+- kein Lob, keine psychologische Deutung — beschreibend und warm
 
-GUT: "Freiheit taucht hier in mehreren Kontexten auf."
+GUT: "Freiheit zuerst — und Gesundheit als Fundament. Das zeigt eine klare innere Ordnung."
+GUT: "Planen und gleichzeitig Natur — das ist eine interessante Kombination."
 GUT: "Du beschreibst Energie und gleichzeitig klare Grenzen."
 SCHLECHT: "Das klingt wirklich wichtig für dich."
 SCHLECHT: "Das ist tiefgründig — gut, dass du das ansprichst."
@@ -638,8 +639,8 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
   const questionCount = messages.filter(m => m.role === "assistant").length;
 
   // ── 4. HARD STOP ─────────────────────────────────────────────
-  if (questionCount >= 15) {
-    log(endpoint, { reqId, info: "hard stop — questionCount >= 15" });
+  if (questionCount >= 9) {
+    log(endpoint, { reqId, info: "hard stop — questionCount >= 9" });
     return res.json({ done: true });
   }
 
@@ -687,16 +688,16 @@ Jede Frage fühlt sich wie ein echter nächster Schritt an — nicht wie eine Va
     content: `
 CURRENT QUESTION: ${questionCount}
 COMPASS-PHASEN (VERBINDLICH):
-1–4 — WERTE & MISSION
-→ Was ist wichtig? Wofür steht dieser Mensch?
+1–3 — WERTE & MISSION
+→ Was ist wichtig? Wofür steht dieser Mensch? Lebensphilosophie, Mission.
 → Fragen: offen, einladend, konkret.
-5–8 — PERSÖNLICHKEIT & ENERGIE
-→ Wie ist dieser Mensch aufgebaut? Stärken, Spark-Zone, Drain-Zone.
+4–5 — PERSÖNLICHKEIT & ENERGIE
+→ Spark-Zone, Drain-Zone, Entscheidungsstil, Rolle in Gruppen.
 → Fragen: neugierig, beobachtend, konkret.
-9–12 — ZIELE & CHANCEN
-→ Was will er? Was übersieht er?
+6–7 — ZIELE & CHANCEN
+→ Was will er? Was übersieht er? Kurze und lange Ziele.
 → Fragen: direkt, erforschend.
-13–15 — ALIGNMENT & WAHRHEIT
+8–9 — ALIGNMENT & WAHRHEIT
 → Wo stimmt das Leben mit den Werten überein — und wo nicht?
 → Kongruenz, blinde Flecken, tiefste Wahrheit.
 → Fragen: ruhig, leicht konfrontierend.
