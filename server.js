@@ -639,8 +639,9 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
   const questionCount = messages.filter(m => m.role === "assistant").length;
 
   // ── 4. HARD STOP ─────────────────────────────────────────────
-  if (questionCount >= 9) {
-    log(endpoint, { reqId, info: "hard stop — questionCount >= 9" });
+  // Set to 10 so Q9's answer still receives a reflection before the pre-analysis screen
+  if (questionCount >= 10) {
+    log(endpoint, { reqId, info: "hard stop — questionCount >= 10" });
     return res.json({ done: true });
   }
 
