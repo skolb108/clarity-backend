@@ -640,8 +640,8 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
 
   // ── 4. HARD STOP ─────────────────────────────────────────────
   // Set to 10 so Q9's answer still receives a reflection before the pre-analysis screen
-  if (questionCount >= 10) {
-    log(endpoint, { reqId, info: "hard stop — questionCount >= 10" });
+  if (questionCount >= 13) {
+    log(endpoint, { reqId, info: "hard stop — questionCount >= 13" });
     return res.json({ done: true });
   }
 
