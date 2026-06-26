@@ -1414,6 +1414,14 @@ app.post("/api/reminder", async (req, res) => {
   if (!email) return res.status(400).json({ error: "EMAIL_REQUIRED" });
 
   log(endpoint, { reqId, email, type });
+
+  // Count signups in analytics (no address stored, just increment)
+  const today = new Date().toISOString().slice(0, 10);
+  eventData.totals["waitlist_signup"] = (eventData.totals["waitlist_signup"] || 0) + 1;
+  eventData.daily[today] = eventData.daily[today] || {};
+  eventData.daily[today]["waitlist_signup"] = (eventData.daily[today]["waitlist_signup"] || 0) + 1;
+  saveEvents(eventData);
+
   res.json({ ok: true });
 });
 
@@ -1433,10 +1441,18 @@ const EVENT_NAMES = new Set([
   "question_5",  "question_6",  "question_7",  "question_8",
   "question_9",  "question_10", "question_11", "question_12",
   "question_13", "question_14", "question_15", "question_16",
-  "question_17", "question_18",
+  "question_17", "question_18", "question_19", "question_20",
   "flow_complete",
+  "result_cover",
+  "result_kompass",
+  "result_share_screen",
+  "result_bridge",
+  "result_habits",
+  "result_waitlist",
   "share_opened",
   "share_tapped",
+  "image_downloaded",
+  "waitlist_signup",
 ]);
 
 function loadEvents() {
