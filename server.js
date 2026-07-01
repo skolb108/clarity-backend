@@ -104,6 +104,8 @@ async function callOpenAI(messages, options = {}) {
    SECURITY MIDDLEWARE
 ───────────────────────────────────────────────────────────── */
 
+app.set("trust proxy", 1);
+
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
 app.use(cors({
@@ -1415,8 +1417,17 @@ app.post("/api/reminder", async (req, res) => {
 
   log(endpoint, { reqId, email, type });
 
-  // Count signups in analytics (no address stored, just increment)
   const today = new Date().toISOString().slice(0, 10);
+
+  // Persist email to waitlist.json
+  const waitlist = loadWaitlist();
+  const alreadyExists = waitlist.some(e => e.email === email);
+  if (!alreadyExists) {
+    waitlist.push({ email, type, date: today, ts: new Date().toISOString() });
+    saveWaitlist(waitlist);
+  }
+
+  // Count in analytics
   eventData.totals["waitlist_signup"] = (eventData.totals["waitlist_signup"] || 0) + 1;
   eventData.daily[today] = eventData.daily[today] || {};
   eventData.daily[today]["waitlist_signup"] = (eventData.daily[today]["waitlist_signup"] || 0) + 1;
@@ -1432,8 +1443,20 @@ app.post("/api/reminder", async (req, res) => {
 ───────────────────────────────────────────────────────────── */
 import { readFileSync, writeFileSync, existsSync } from "fs";
 
-const EVENTS_FILE = "./events.json";
-const STATS_KEY   = process.env.STATS_KEY || "clarity-stats";
+const EVENTS_FILE   = "./events.json";
+const WAITLIST_FILE = "./waitlist.json";
+const STATS_KEY     = process.env.STATS_KEY || "clarity-stats";
+
+function loadWaitlist() {
+  try {
+    if (existsSync(WAITLIST_FILE)) return JSON.parse(readFileSync(WAITLIST_FILE, "utf8"));
+  } catch (_) {}
+  return [];
+}
+
+function saveWaitlist(data) {
+  try { writeFileSync(WAITLIST_FILE, JSON.stringify(data, null, 2), "utf8"); } catch (_) {}
+}
 
 const EVENT_NAMES = new Set([
   "flow_start",
@@ -1487,6 +1510,13 @@ app.post("/api/stats", (req, res) => {
   const { key } = req.body || {};
   if (key !== STATS_KEY) return res.status(401).json({ error: "UNAUTHORIZED" });
   res.json(eventData);
+});
+
+// POST /api/waitlist — returns all collected emails (protected)
+app.post("/api/waitlist", (req, res) => {
+  const { key } = req.body || {};
+  if (key !== STATS_KEY) return res.status(401).json({ error: "UNAUTHORIZED" });
+  res.json(loadWaitlist());
 });
 
 /* ─────────────────────────────────────────────────────────────
